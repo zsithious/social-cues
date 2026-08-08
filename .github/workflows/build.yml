@@ -1,0 +1,86 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# NOTE: every gradle.properties in this repo pins
+# org.gradle.java.home=/home/erto/jdk21 for the local dev machine
+# (DESIGN.md §2). That path does not exist on GitHub Actions runners, so
+# every gradle invocation below overrides it back to the JDK setup-java
+# installs, via -Dorg.gradle.java.home (a command-line system property
+# takes precedence over the value baked into gradle.properties).
+
+jobs:
+  core-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: core unit tests (JUnit 5)
+        run: ./gradlew :core:test -Dorg.gradle.java.home="$JAVA_HOME" --no-daemon
+
+  fabric-matrix:
+    needs: core-test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mc:
+          - "1.21"
+          - "1.21.1"
+          - "1.21.2"
+          - "1.21.3"
+          - "1.21.4"
+          - "1.21.5"
+          - "1.21.6"
+          - "1.21.7"
+          - "1.21.8"
+          - "1.21.9"
+          - "1.21.10"
+          - "1.21.11"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: build :mc:${{ matrix.mc }}
+        run: ./gradlew ":mc:${{ matrix.mc }}:build" -Dorg.gradle.java.home="$JAVA_HOME" --no-daemon
+
+  paper-build:
+    needs: core-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: build Paper plugin
+        run: ./gradlew :paper:build -Dorg.gradle.java.home="$JAVA_HOME" --no-daemon
+
+  # Modrinth upload — disabled until P8 (DESIGN.md §13/§14). Uncomment and
+  # add the `MODRINTH_TOKEN` secret + real project id once ready to publish.
+  # publish:
+  #   needs: [fabric-matrix, paper-build]
+  #   if: startsWith(github.ref, 'refs/tags/')
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-java@v4
+  #       with:
+  #         distribution: temurin
+  #         java-version: 21
+  #     - name: Publish all jars to Modrinth
+  #       uses: Kir-Antipov/mc-publish@v3.3
+  #       with:
+  #         modrinth-id: TODO-modrinth-project-id
+  #         modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
+  #         files: |
+  #           mc/*/build/libs/!(*-@(dev|sources)).jar
+  #           paper/build/libs/!(*-@(dev|sources)).jar

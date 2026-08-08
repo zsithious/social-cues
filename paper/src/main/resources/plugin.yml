@@ -1,0 +1,6 @@
+name: SocialCues
+version: ${version}
+main: dev.zsithious.socialcues.paper.SocialCuesPlugin
+api-version: '1.21'
+author: zsithious
+description: See when players are typing, browsing a GUI, or idle. Open source, independent alternative implementation.

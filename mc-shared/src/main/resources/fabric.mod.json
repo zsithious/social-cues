@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "socialcues",
+  "version": "${version}",
+  "name": "Social Cues",
+  "description": "See when players are typing, browsing a GUI, or idle. Open source, independent alternative implementation.",
+  "authors": ["zsithious"],
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "dev.zsithious.socialcues.mcshared.SocialCuesInitializer"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": "${mc_version_range}",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}
