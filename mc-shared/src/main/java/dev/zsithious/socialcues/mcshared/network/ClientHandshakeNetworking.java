@@ -10,6 +10,8 @@ import dev.zsithious.socialcues.core.protocol.ProtocolDecodeException;
 import dev.zsithious.socialcues.core.protocol.S2CMessage;
 import dev.zsithious.socialcues.core.protocol.S2CMessages;
 import dev.zsithious.socialcues.core.protocol.ServerHello;
+import dev.zsithious.socialcues.mcshared.client.ClientCueCapture;
+import dev.zsithious.socialcues.mcshared.client.ServerPolicyState;
 
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
@@ -38,7 +40,11 @@ public final class ClientHandshakeNetworking {
     private ClientHandshakeNetworking() {
     }
 
-    /** For later phases (P3+) that need to know whether it's safe to send/render anything. Unused within P1 itself. */
+    /**
+     * Whether it's safe to send/render anything. Unused within P1 itself;
+     * {@code ClientCueCapture} (P3, DESIGN.md §14) is the first real caller —
+     * it refuses to send a single {@code CueUpdate} while this is false.
+     */
     public static boolean isActive() {
         return HANDSHAKE.isActive();
     }
@@ -46,6 +52,11 @@ public final class ClientHandshakeNetworking {
     public static void register() {
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
             HANDSHAKE.reset();
+            // P3 (DESIGN.md §14): a fresh join might be a different server
+            // with different policy bits — never let P3's capture state
+            // carry over from whatever the previous session last sent/saw.
+            ServerPolicyState.reset();
+            ClientCueCapture.reset();
             if (!ClientPlayNetworking.canSend(SocialCuesPayload.ID)) {
                 // Pre-filter only (DESIGN.md's "ön filtre"): the true source of
                 // truth is still whether a ServerHello ever arrives, handled
@@ -59,7 +70,11 @@ public final class ClientHandshakeNetworking {
             HANDSHAKE.onHelloSent();
         });
 
-        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> HANDSHAKE.reset());
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
+            HANDSHAKE.reset();
+            ServerPolicyState.reset();
+            ClientCueCapture.reset();
+        });
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> HANDSHAKE.tick());
 
@@ -72,6 +87,13 @@ public final class ClientHandshakeNetworking {
             }
             if (message instanceof ServerHello hello) {
                 HANDSHAKE.onServerHelloReceived(hello.protoVersion(), ProtocolConstants.VERSION);
+                if (HANDSHAKE.isActive()) {
+                    // P3 (DESIGN.md §14): remember policyBits/idleThresholdTicks
+                    // for ClientCueCapture. A version-mismatched ServerHello
+                    // left the handshake DORMANT above, so this never stores
+                    // policy from a ServerHello the client actually rejected.
+                    ServerPolicyState.update(hello.policyBits(), hello.idleThresholdTicks());
+                }
             }
             // CueBatch/CueDrop: no relay/render consumer exists yet (P1 scope), ignored.
         });

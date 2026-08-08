@@ -1,5 +1,6 @@
 package dev.zsithious.socialcues.mcshared;
 
+import dev.zsithious.socialcues.mcshared.client.ClientCueCapture;
 import dev.zsithious.socialcues.mcshared.network.ClientHandshakeNetworking;
 
 import net.fabricmc.api.ClientModInitializer;
@@ -16,5 +17,9 @@ public final class SocialCuesClientInitializer implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         ClientHandshakeNetworking.register();
+        // DESIGN.md §14 P3: client-side capture (typing/screen/AFK/intensity).
+        // Only ever sends anything once ClientHandshakeNetworking reports the
+        // handshake ACTIVE (see ClientCueCapture.onClientTick's first check).
+        ClientCueCapture.register();
     }
 }

@@ -57,7 +57,12 @@ public final class PluginConfig {
         int idleThresholdTicks = idleThresholdSeconds * IdleTimer.MC_TICKS_PER_SECOND;
 
         // 0 disables kicking outright; DESIGN.md §8.7 calls this the "kick eşiği" (kick threshold).
-        int kickAfterViolations = yaml.getInt("rate-limit.kick-after-violations", 20);
+        // Default is 0 (opt-in), not some positive count: on a real server a lag
+        // spike, a ViaVersion re-packetization quirk, or an unrelated buggy mod
+        // can all make an innocent client look like it is spamming violations.
+        // Kicking real players over that is a server-owner decision to make
+        // deliberately, never a surprise default that ships already armed.
+        int kickAfterViolations = yaml.getInt("rate-limit.kick-after-violations", 0);
 
         return new PluginConfig(policyBits, relayConfig, idleThresholdTicks, kickAfterViolations);
     }

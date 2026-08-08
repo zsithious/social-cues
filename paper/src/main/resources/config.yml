@@ -31,8 +31,15 @@ rate-limit:
   # DESIGN.md §5: "oyuncu başına ≤4 CueUpdate/saniye; aşan paketler düşer."
   max-updates-per-second: 4
   # Ardışık ihlal (hız sınırı aşımı / aşırı boyut / bozuk paket) sayısı bu eşiği
-  # geçerse oyuncu atılır. 0 = asla atma, sadece logla.
-  kick-after-violations: 20
+  # geçerse oyuncu atılır. 0 = asla atma, sadece paketi düşür + logla.
+  #
+  # Varsayılan 0 (kapalı): gerçek bir sunucuda bir lag spike'ı, ViaVersion'ın
+  # eski bir istemciyi yeniden paketlemesindeki bir tuhaflık ya da bozuk/başka
+  # bir modun ürettiği kötü niyetsiz bir istemci paketleri kolayca "ardışık
+  # ihlal" eşiğine değdirebilir; bu, hız sınırını aşan ama saldırgan olmayan
+  # masum bir oyuncuyu sunucudan atmak demektir. Kick, bilinçli bir opt-in
+  # olmalı, sürpriz bir varsayılan değil.
+  kick-after-violations: 0
 
 # DESIGN.md §5: global (sekme listesi) katman "değişimde ve ≤1/saniye".
 global-broadcast-min-interval-ms: 1000
