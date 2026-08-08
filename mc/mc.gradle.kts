@@ -63,6 +63,13 @@ sourceSets {
         }
         resources {
             srcDir(rootProject.file("mc-shared/src/main/resources"))
+            // DESIGN.md §7 P4b / §3.1: each bucket ships its own socialcues.mixins.json
+            // (and, from P4b onward, a META-INF/services provider file — see
+            // mcshared.client.FeatureRendererBootstrap) under its own resources dir. The
+            // shared fabric.mod.json references the mixin config by a single fixed name
+            // ("socialcues.mixins.json"); only ever one bucket's resources dir is ever on
+            // a given :mc:<version> project's classpath, so the name is never ambiguous.
+            srcDir(rootProject.file("adapters/$bucketDirName/src/main/resources"))
         }
     }
 }

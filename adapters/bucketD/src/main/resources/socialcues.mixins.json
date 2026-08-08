@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "package": "dev.zsithious.socialcues.adapter.bucketd.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "PlayerEntityRenderStateMixin",
+    "PlayerEntityRendererMixin",
+    "PlayerListHudMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

@@ -1,5 +1,5 @@
 /**
- * DESIGN.md §14 P3/P4a "İstemci yakalama" ve render altyapısı — the
+ * DESIGN.md §14 P3/P4a/P4b "İstemci yakalama" ve render altyapısı — the
  * platform-independent half of everything the Minecraft-side client code
  * needs: a pure-Java table from a Minecraft {@code ScreenHandlerType}
  * registry id string to {@link dev.zsithious.socialcues.core.state.ScreenKind}
@@ -22,5 +22,15 @@
  * observed {@code Activity}/{@code ScreenKind}/intensity/flags each tick, a
  * registry id string, and raw protocol messages; see {@code mcshared.client}
  * and {@code mcshared.config} for that glue.
+ *
+ * <p>P4b (DESIGN.md §7, Katman 1 + Katman 2 render) adds every MC-independent
+ * render <em>decision</em>, so bucketD's adapter code is left with nothing to
+ * decide, only to draw: {@link dev.zsithious.socialcues.core.client.CueDisplaySelector}
+ * (which atlas cell / translation key a cue maps to, folding in the
+ * AFK+SLEEPY variant), {@link dev.zsithious.socialcues.core.client.DistanceFade}
+ * (Layer 1's distance-to-opacity curve), and the two layers' independent
+ * "should anything render at all" gates,
+ * {@link dev.zsithious.socialcues.core.client.BillboardCueVisibility} and
+ * {@link dev.zsithious.socialcues.core.client.TabListCueVisibility}.
  */
 package dev.zsithious.socialcues.core.client;

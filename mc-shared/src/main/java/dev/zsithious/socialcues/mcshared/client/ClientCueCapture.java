@@ -15,6 +15,7 @@ import dev.zsithious.socialcues.core.protocol.C2SMessages;
 import dev.zsithious.socialcues.core.protocol.CueUpdate;
 import dev.zsithious.socialcues.core.state.Activity;
 import dev.zsithious.socialcues.core.state.CueFlags;
+import dev.zsithious.socialcues.core.state.PlayerCue;
 import dev.zsithious.socialcues.core.state.ScreenKind;
 import dev.zsithious.socialcues.core.util.IdleTimer;
 import dev.zsithious.socialcues.core.util.TypingRateMeter;
@@ -157,6 +158,10 @@ public final class ClientCueCapture {
         lastLoggedActivity = null;
         lastLoggedScreenKind = null;
         COMMAND_DRAFT.reset();
+        // DESIGN.md §7 P4b: same reasoning as RemoteCueStoreHolder's own reset call
+        // (ClientHandshakeNetworking) — a stale self-cue from a previous server must
+        // never survive into a new session.
+        LocalCueState.reset();
     }
 
     // ---- ScreenKeyboardEvents wiring (typing cadence + command detection) --
@@ -247,6 +252,16 @@ public final class ClientCueCapture {
         if (activity == Activity.AFK && IDLE_TIMER.isSleepy(now, ServerPolicyState.idleThresholdTicks())) {
             flags |= CueFlags.SLEEPY;
         }
+
+        // DESIGN.md §7 P4b: feeds Layer 1's showOnSelf (core.client.BillboardCueVisibility)
+        // its only possible data source for the local player — see LocalCueState's Javadoc
+        // for why core.client.RemoteCueStore can never have this player's own id. Recorded
+        // pre-policy-mask (the same activity/screenKind/intensity/flags CueSampler.sample
+        // below is about to mask for the wire) and unconditionally every tick, independent
+        // of CueSampler's own change-detection/rate-limit gate: a player showing themselves
+        // their own current state has nothing to do with how often that state is worth
+        // spending network bandwidth to tell someone else.
+        LocalCueState.update(new PlayerCue(client.player.getUuid(), activity, screenKind, intensity, flags, now));
 
         Optional<CueUpdate> update = SAMPLER.sample(activity, screenKind, intensity, flags, effectiveBits, now);
         update.ifPresent(u -> {
