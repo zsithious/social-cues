@@ -1,0 +1,11 @@
+{
+  "socialcues.activity.normal": "",
+  "socialcues.activity.typing_chat": "Yazıyor...",
+  "socialcues.activity.typing_command": "Komut yazıyor...",
+  "socialcues.activity.typing_sign": "Tabela yazıyor...",
+  "socialcues.activity.typing_book": "Kitap yazıyor...",
+  "socialcues.activity.in_screen": "Bir menüde",
+  "socialcues.activity.afk": "Boşta",
+  "socialcues.activity.speaking": "Konuşuyor",
+  "socialcues.flag.sleepy": "Uyuyor"
+}

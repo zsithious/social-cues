@@ -1,6 +1,7 @@
 package dev.zsithious.socialcues.mcshared;
 
 import dev.zsithious.socialcues.mcshared.client.ClientCueCapture;
+import dev.zsithious.socialcues.mcshared.config.ClientConfigState;
 import dev.zsithious.socialcues.mcshared.network.ClientHandshakeNetworking;
 
 import net.fabricmc.api.ClientModInitializer;
@@ -16,10 +17,21 @@ public final class SocialCuesClientInitializer implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        // DESIGN.md §9 P4a: load socialcues-client.json (creating it with
+        // defaults if absent) before anything below reads share prefs from
+        // it, so the very first tick already sees the user's real settings
+        // rather than a brief window of hardcoded defaults.
+        ClientConfigState.load();
+
         ClientHandshakeNetworking.register();
         // DESIGN.md §14 P3: client-side capture (typing/screen/AFK/intensity).
         // Only ever sends anything once ClientHandshakeNetworking reports the
         // handshake ACTIVE (see ClientCueCapture.onClientTick's first check).
         ClientCueCapture.register();
+        // DESIGN.md §9 P4a: what P3 left as SharePrefsSource.allEnabled() is
+        // now backed by the loaded config, live for the rest of the session
+        // (see ClientConfigState.SHARE_PREFS's Javadoc for why no further
+        // wiring is needed after a future P6 reload).
+        ClientCueCapture.setSharePrefs(ClientConfigState.SHARE_PREFS);
     }
 }

@@ -5,12 +5,15 @@ import java.util.logging.Logger;
 import dev.zsithious.socialcues.core.handshake.ClientHandshake;
 import dev.zsithious.socialcues.core.protocol.C2SMessages;
 import dev.zsithious.socialcues.core.protocol.ClientHello;
+import dev.zsithious.socialcues.core.protocol.CueBatch;
+import dev.zsithious.socialcues.core.protocol.CueDrop;
 import dev.zsithious.socialcues.core.protocol.ProtocolConstants;
 import dev.zsithious.socialcues.core.protocol.ProtocolDecodeException;
 import dev.zsithious.socialcues.core.protocol.S2CMessage;
 import dev.zsithious.socialcues.core.protocol.S2CMessages;
 import dev.zsithious.socialcues.core.protocol.ServerHello;
 import dev.zsithious.socialcues.mcshared.client.ClientCueCapture;
+import dev.zsithious.socialcues.mcshared.client.RemoteCueStoreHolder;
 import dev.zsithious.socialcues.mcshared.client.ServerPolicyState;
 
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -26,6 +29,12 @@ import net.fabricmc.loader.api.FabricLoader;
  * (the {@code client} entrypoint) — never from the common entrypoint — so a
  * dedicated server never attempts to link client-only classes such as
  * {@link ClientPlayNetworking} or {@link net.minecraft.client.MinecraftClient}.
+ *
+ * <p>DESIGN.md §14 P4a: the receiver below is also the one place incoming
+ * {@code CueBatch}/{@code CueDrop} messages get applied to {@link
+ * RemoteCueStoreHolder}'s store — until P4a this comment used to read "no
+ * relay/render consumer exists yet"; P4b's render code is that consumer now,
+ * reading through {@link RemoteCueStoreHolder#get()}.
  */
 public final class ClientHandshakeNetworking {
 
@@ -57,6 +66,11 @@ public final class ClientHandshakeNetworking {
             // carry over from whatever the previous session last sent/saw.
             ServerPolicyState.reset();
             ClientCueCapture.reset();
+            // P4a (DESIGN.md §14): same reasoning for what P4b's render code
+            // will read — a fresh join must not still be showing cues left
+            // over from a previous server (possibly a completely different
+            // player set, or the same UUID meaning someone else entirely).
+            RemoteCueStoreHolder.get().clear();
             if (!ClientPlayNetworking.canSend(SocialCuesPayload.ID)) {
                 // Pre-filter only (DESIGN.md's "ön filtre"): the true source of
                 // truth is still whether a ServerHello ever arrives, handled
@@ -74,6 +88,7 @@ public final class ClientHandshakeNetworking {
             HANDSHAKE.reset();
             ServerPolicyState.reset();
             ClientCueCapture.reset();
+            RemoteCueStoreHolder.get().clear();
         });
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> HANDSHAKE.tick());
@@ -94,8 +109,22 @@ public final class ClientHandshakeNetworking {
                     // policy from a ServerHello the client actually rejected.
                     ServerPolicyState.update(hello.policyBits(), hello.idleThresholdTicks());
                 }
+            } else if (message instanceof CueBatch batch) {
+                // P4a (DESIGN.md §14): fed straight to the store P4b's render
+                // code reads. Guarded by isActive() defensively — a
+                // well-behaved relay only ever sends these after its own
+                // ServerHello was accepted, but a dormant/mismatched client
+                // must never start accumulating state for a session it
+                // considers inactive (see RemoteCueStore's Javadoc: it trusts
+                // nothing beyond what the wire types themselves guarantee).
+                if (HANDSHAKE.isActive()) {
+                    RemoteCueStoreHolder.get().applyBatch(batch, System.currentTimeMillis());
+                }
+            } else if (message instanceof CueDrop drop) {
+                if (HANDSHAKE.isActive()) {
+                    RemoteCueStoreHolder.get().applyDrop(drop);
+                }
             }
-            // CueBatch/CueDrop: no relay/render consumer exists yet (P1 scope), ignored.
         });
     }
 

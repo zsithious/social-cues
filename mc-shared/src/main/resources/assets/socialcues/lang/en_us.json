@@ -1,0 +1,11 @@
+{
+  "socialcues.activity.normal": "",
+  "socialcues.activity.typing_chat": "Typing...",
+  "socialcues.activity.typing_command": "Typing a command...",
+  "socialcues.activity.typing_sign": "Writing a sign...",
+  "socialcues.activity.typing_book": "Writing a book...",
+  "socialcues.activity.in_screen": "Browsing a menu",
+  "socialcues.activity.afk": "AFK",
+  "socialcues.activity.speaking": "Speaking",
+  "socialcues.flag.sleepy": "Sleeping"
+}

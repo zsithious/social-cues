@@ -1,16 +1,26 @@
 /**
- * DESIGN.md §14 P3 "İstemci yakalama" — the platform-independent half of
- * client-side capture: a pure-Java table from a Minecraft
- * {@code ScreenHandlerType} registry id string to
- * {@link dev.zsithious.socialcues.core.state.ScreenKind}
+ * DESIGN.md §14 P3/P4a "İstemci yakalama" ve render altyapısı — the
+ * platform-independent half of everything the Minecraft-side client code
+ * needs: a pure-Java table from a Minecraft {@code ScreenHandlerType}
+ * registry id string to {@link dev.zsithious.socialcues.core.state.ScreenKind}
  * ({@link dev.zsithious.socialcues.core.client.ScreenKindMapper}), the
  * single injectable seam for "what has the local player agreed to share"
- * ({@link dev.zsithious.socialcues.core.client.SharePrefsSource}), and the
+ * ({@link dev.zsithious.socialcues.core.client.SharePrefsSource}), the
  * change-detection/rate-limit/policy-masking decision of whether a
  * {@code CueUpdate} should be sent at all right now
- * ({@link dev.zsithious.socialcues.core.client.CueSampler}). No
+ * ({@link dev.zsithious.socialcues.core.client.CueSampler}), the P4a store
+ * that turns incoming {@code CueBatch}/{@code CueDrop} messages into the
+ * {@code UUID -> PlayerCue} map P4b's render code reads
+ * ({@link dev.zsithious.socialcues.core.client.RemoteCueStore}), the
+ * render/privacy configuration model a future P6 config UI edits
+ * ({@link dev.zsithious.socialcues.core.client.ClientConfigData}), and the
+ * hand-drawn icon atlas' cell layout
+ * ({@link dev.zsithious.socialcues.core.client.CueIconAtlas}), and its
+ * {@code textOnly}-mode translation key counterpart
+ * ({@link dev.zsithious.socialcues.core.client.CueLangKeys}). No
  * Minecraft/Bukkit imports — the Fabric client only has to supply the
- * observed {@code Activity}/{@code ScreenKind}/intensity/flags each tick and
- * a registry id string; see {@code mcshared.client} for that glue.
+ * observed {@code Activity}/{@code ScreenKind}/intensity/flags each tick, a
+ * registry id string, and raw protocol messages; see {@code mcshared.client}
+ * and {@code mcshared.config} for that glue.
  */
 package dev.zsithious.socialcues.core.client;
