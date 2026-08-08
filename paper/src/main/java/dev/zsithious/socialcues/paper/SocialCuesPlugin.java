@@ -1,16 +1,101 @@
 package dev.zsithious.socialcues.paper;
 
+import java.util.Map;
+import java.util.UUID;
+
+import org.bukkit.Bukkit;
+import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 
+import dev.zsithious.socialcues.core.protocol.ProtocolConstants;
+import dev.zsithious.socialcues.core.protocol.S2CMessage;
+import dev.zsithious.socialcues.core.protocol.S2CMessages;
+import dev.zsithious.socialcues.core.relay.CueRelay;
+import dev.zsithious.socialcues.core.relay.TickResult;
+import dev.zsithious.socialcues.paper.config.PluginConfig;
+import dev.zsithious.socialcues.paper.network.PlayerLifecycleListener;
+import dev.zsithious.socialcues.paper.network.SocialCuesMessageListener;
+import dev.zsithious.socialcues.paper.relay.BukkitVisibilityChecker;
+import dev.zsithious.socialcues.paper.scheduling.BukkitPluginScheduler;
+import dev.zsithious.socialcues.paper.scheduling.PluginScheduler;
+
 /**
- * P0 stub: no channel registration, no listeners yet. DESIGN.md §8's actual
- * relay responsibilities (Messenger channel, ServerHello, delta CueBatch,
- * visibility filtering, config) start at P2.
+ * DESIGN.md §8/§14 P2: the Paper adapter around {@code core.relay.CueRelay}.
+ * Every actual decision — state storage, permission masking, delta
+ * suppression, near/global tiering, rate limiting, visibility filtering —
+ * lives in {@code core}; this class only wires Bukkit lifecycle events and
+ * the {@code socialcues:v1} plugin-message channel to it and turns its
+ * output into {@code Messenger} sends. See DESIGN.md §8's "röle mantığı iki
+ * kez yazılmayacak".
  */
 public final class SocialCuesPlugin extends JavaPlugin {
 
+    private CueRelay relay;
+    private PluginConfig config;
+    private PluginScheduler scheduler;
+    private SocialCuesMessageListener messageListener;
+
     @Override
     public void onEnable() {
-        getLogger().info("Social Cues loaded (P0 stub, no features yet)");
+        saveDefaultConfig();
+        config = PluginConfig.load(getConfig());
+
+        relay = new CueRelay(new BukkitVisibilityChecker(), config.relayConfig());
+        relay.setPolicyBits(config.policyBits());
+
+        getServer().getMessenger().registerOutgoingPluginChannel(this, ProtocolConstants.CHANNEL);
+        messageListener = new SocialCuesMessageListener(this, relay, config);
+        getServer().getMessenger().registerIncomingPluginChannel(this, ProtocolConstants.CHANNEL, messageListener);
+        getLogger().info("Registered " + ProtocolConstants.CHANNEL + " plugin channel (incoming="
+                + getServer().getMessenger().isIncomingChannelRegistered(this, ProtocolConstants.CHANNEL)
+                + ", outgoing=" + getServer().getMessenger().isOutgoingChannelRegistered(this, ProtocolConstants.CHANNEL) + ")");
+
+        scheduler = new BukkitPluginScheduler(this);
+        getServer().getPluginManager().registerEvents(
+                new PlayerLifecycleListener(this, relay, messageListener, scheduler), this);
+
+        long periodTicks = Math.max(1, config.relayConfig().updateIntervalTicks());
+        scheduler.runRepeating(this::broadcastTick, periodTicks, periodTicks);
+
+        getLogger().info("Social Cues loaded (P2: relay + config + visibility filter, near-radius="
+                + config.relayConfig().nearRadius() + ", update-interval-ticks=" + periodTicks + ")");
+    }
+
+    @Override
+    public void onDisable() {
+        if (scheduler != null) {
+            scheduler.cancelAll();
+        }
+        getServer().getMessenger().unregisterOutgoingPluginChannel(this);
+        getServer().getMessenger().unregisterIncomingPluginChannel(this);
+    }
+
+    /** DESIGN.md §8.4: one relay tick per {@code updateIntervalTicks}, fanned out as {@code Messenger} sends. */
+    private void broadcastTick() {
+        TickResult result = relay.tick(System.currentTimeMillis());
+        sendAll(result.nearBatches());
+        sendAll(result.nearDrops());
+        sendAll(result.globalBatches());
+        sendAll(result.globalDrops());
+    }
+
+    private void sendAll(Map<UUID, ? extends S2CMessage> messagesByRecipient) {
+        if (messagesByRecipient.isEmpty()) {
+            return;
+        }
+        for (Map.Entry<UUID, ? extends S2CMessage> entry : messagesByRecipient.entrySet()) {
+            Player recipient = Bukkit.getPlayer(entry.getKey());
+            if (recipient == null) {
+                continue;
+            }
+            // DESIGN.md §8.6: "socialcues.see" gates receiving anyone else's cues.
+            if (!recipient.hasPermission("socialcues.see")) {
+                continue;
+            }
+            if (!recipient.getListeningPluginChannels().contains(ProtocolConstants.CHANNEL)) {
+                continue;
+            }
+            recipient.sendPluginMessage(this, ProtocolConstants.CHANNEL, S2CMessages.encode(entry.getValue()));
+        }
     }
 }

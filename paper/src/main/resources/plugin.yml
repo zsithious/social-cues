@@ -4,3 +4,10 @@ main: dev.zsithious.socialcues.paper.SocialCuesPlugin
 api-version: '1.21'
 author: zsithious
 description: See when players are typing, browsing a GUI, or idle. Open source, independent alternative implementation.
+permissions:
+  socialcues.share:
+    description: Allows sharing your own activity cues with other players.
+    default: true
+  socialcues.see:
+    description: Allows seeing other players' activity cues.
+    default: true

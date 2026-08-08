@@ -1,9 +1,13 @@
 /**
- * Placeholder for P0. DESIGN.md §3 lists {@code ServerPolicy} and
- * {@code FeatureFlags} here, but their concrete bit layouts (policyBits in
- * {@code ServerHello}, featureBits in {@code ClientHello}) are not defined
- * in DESIGN.md yet — inventing them now would mean guessing protocol
- * semantics. Deferred to the phase that actually interprets those bits
- * (P1/P2 handshake + server policy work).
+ * DESIGN.md §5 "Politika ve paylaşım bitleri" — the 8-bit layout shared by
+ * {@code ServerHello.policyBits} and {@code SharePrefs.prefBits}
+ * ({@link dev.zsithious.socialcues.core.policy.PolicyBits}), the
+ * off/nearby/all AFK visibility conversion
+ * ({@link dev.zsithious.socialcues.core.policy.AfkVisibility}), and the
+ * send-time permission masking
+ * ({@link dev.zsithious.socialcues.core.policy.EffectivePolicy}) that
+ * {@code core.relay.CueRelay} applies to every outgoing cue. Pure Java, no
+ * Minecraft/Bukkit imports — see DESIGN.md §8's "röle mantığı iki kez
+ * yazılmayacak".
  */
 package dev.zsithious.socialcues.core.policy;
