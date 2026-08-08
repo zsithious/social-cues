@@ -86,3 +86,60 @@ tasks.processResources {
         )
     }
 }
+
+// DESIGN.md §10.1 / P3 privacy fix: written chat/sign/book text must never
+// be read, not even transiently to peek at a single character (a heap dump,
+// a later log line, or a careless refactor can leak it right back out — the
+// rule is "never read", not "read then discard"). Mirrors core/build.gradle.kts's
+// checkCleanRoom: a documentation comment saying "this never reads the
+// field" is not a guarantee, a build failure is. See
+// mcshared.client.ClientCueCapture's class Javadoc for the keycode-only
+// approach this enforces.
+val checkNoTextAccess by tasks.registering {
+    group = "verification"
+    description = "Fails the build if mc-shared/adapter source reads chat/sign/book message content."
+
+    val sourceDirs = listOf(
+        rootProject.file("mc-shared/src"),
+        rootProject.file("adapters/$bucketDirName/src")
+    )
+
+    doLast {
+        // Deliberately broad: "getText(" and "getMessage(" catch any
+        // text-content accessor, not just ChatScreen's, because the same
+        // guarantee applies to sign lines and book pages too.
+        val forbidden = listOf("getText(", "getMessage(", "chatField", "originalChatText")
+        val offenders = mutableListOf<String>()
+        sourceDirs.forEach { dir ->
+            if (dir.exists()) {
+                dir.walkTopDown()
+                    .filter { it.isFile && it.extension == "java" }
+                    .forEach { file ->
+                        file.readLines().forEachIndexed { index, line ->
+                            val trimmed = line.trim()
+                            // Javadoc/line-comment lines are allowed to *mention*
+                            // these names when explaining why they're forbidden
+                            // (see ClientCueCapture's class Javadoc) — only actual
+                            // code lines are policed, matching this project's
+                            // Javadoc convention of prefixing every continuation
+                            // line with "*".
+                            val isCommentLine = trimmed.startsWith("*") || trimmed.startsWith("//")
+                            if (!isCommentLine && forbidden.any { trimmed.contains(it) }) {
+                                offenders += "${file.relativeTo(rootProject.projectDir)}:${index + 1}: $trimmed"
+                            }
+                        }
+                    }
+            }
+        }
+        if (offenders.isNotEmpty()) {
+            throw GradleException(
+                "mc-shared/adapters must never read chat/sign/book message content " +
+                    "(DESIGN.md §10.1). Offending lines:\n" + offenders.joinToString("\n")
+            )
+        }
+    }
+}
+
+tasks.named("check") {
+    dependsOn(checkNoTextAccess)
+}

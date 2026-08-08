@@ -5,6 +5,7 @@ import java.util.Optional;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import dev.zsithious.socialcues.core.client.CommandDraftDetector;
 import dev.zsithious.socialcues.core.client.CueSampler;
 import dev.zsithious.socialcues.core.client.ScreenKindMapper;
 import dev.zsithious.socialcues.core.client.SharePrefsSource;
@@ -25,7 +26,6 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenKeyboardEvents;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.Element;
 import net.minecraft.client.gui.screen.ChatScreen;
 import net.minecraft.client.gui.screen.GameMenuScreen;
 import net.minecraft.client.gui.screen.Screen;
@@ -34,13 +34,15 @@ import net.minecraft.client.gui.screen.ingame.AbstractSignEditScreen;
 import net.minecraft.client.gui.screen.ingame.BookEditScreen;
 import net.minecraft.client.gui.screen.ingame.HandledScreen;
 import net.minecraft.client.gui.screen.option.OptionsScreen;
-import net.minecraft.client.gui.widget.TextFieldWidget;
+import net.minecraft.client.input.KeyInput;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.client.option.GameOptions;
 import net.minecraft.registry.Registries;
 import net.minecraft.screen.ScreenHandlerType;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.PlayerInput;
+
+import org.lwjgl.glfw.GLFW;
 
 /**
  * DESIGN.md §14 P3 "İstemci yakalama": the Minecraft-side glue that turns
@@ -77,8 +79,21 @@ import net.minecraft.util.PlayerInput;
  * courtesy of {@code core.policy.EffectivePolicy} inside
  * {@code CueSampler}) — it skips resolving that tier's detail at all (e.g.
  * the {@code ScreenHandlerType} registry lookup never runs when
- * {@code SCREEN_DETAIL} is off; the chat field's first character is never
- * inspected when {@code TYPING} is off).
+ * {@code SCREEN_DETAIL} is off; the chat-command classification below never
+ * runs when {@code TYPING} is off).
+ *
+ * <p><b>Written text is never read, not even transiently (DESIGN.md §10.1):</b>
+ * {@code TYPING_COMMAND} vs {@code TYPING_CHAT} is decided purely from
+ * keycodes via {@link CommandDraftDetector} (pure Java, unit tested without
+ * Minecraft), never from the chat field's contents — see that class's
+ * Javadoc for why "just peek at the first character" is not actually
+ * possible without materializing the whole in-progress message as a Java
+ * {@code String}, up to ~20 times/second while typing. {@code mc-shared}'s
+ * {@code checkNoTextAccess} Gradle task (see {@code mc/mc.gradle.kts})
+ * enforces this mechanically: it fails the build on any
+ * {@code getText()}/{@code getMessage()}/{@code chatField}/
+ * {@code originalChatText} occurrence under this module's sources, so a
+ * future edit can't reintroduce a text read by accident.
  */
 public final class ClientCueCapture {
 
@@ -111,6 +126,10 @@ public final class ClientCueCapture {
     private static Activity lastLoggedActivity;
     private static ScreenKind lastLoggedScreenKind;
 
+    // Keycode-only TYPING_COMMAND detection (DESIGN.md §6/§10.1): reset every
+    // time a fresh ChatScreen opens. See CommandDraftDetector's Javadoc.
+    private static final CommandDraftDetector COMMAND_DRAFT = new CommandDraftDetector();
+
     private ClientCueCapture() {
     }
 
@@ -137,23 +156,38 @@ public final class ClientCueCapture {
         havePreviousPose = false;
         lastLoggedActivity = null;
         lastLoggedScreenKind = null;
+        COMMAND_DRAFT.reset();
     }
 
-    // ---- ScreenKeyboardEvents wiring (typing cadence) ----------------------
+    // ---- ScreenKeyboardEvents wiring (typing cadence + command detection) --
 
     private static void onScreenInit(MinecraftClient client, Screen screen, int width, int height) {
+        if (screen instanceof ChatScreen) {
+            // A fresh chat session: nothing decided yet about command-vs-chat.
+            COMMAND_DRAFT.reset();
+        }
         if (!isTypingScreen(screen)) {
             return;
         }
-        ScreenKeyboardEvents.afterKeyPress(screen).register((s, key) -> {
-            long now = System.currentTimeMillis();
-            IDLE_TIMER.recordActivity(now);
-            if (hasBit(currentEffectiveBits(), PolicyBits.TYPING)) {
-                // DESIGN.md §10: only "a keystroke happened" is ever observed
-                // here — KeyInput carries a keycode, never the field's text.
-                TYPING_RATE.recordKeystroke(now);
-            }
-        });
+        boolean isChat = screen instanceof ChatScreen;
+        ScreenKeyboardEvents.afterKeyPress(screen).register((s, key) -> onTypingKeyPress(key, isChat));
+    }
+
+    private static void onTypingKeyPress(KeyInput key, boolean isChat) {
+        long now = System.currentTimeMillis();
+        IDLE_TIMER.recordActivity(now);
+        if (!hasBit(currentEffectiveBits(), PolicyBits.TYPING)) {
+            return;
+        }
+        // DESIGN.md §10.1: only "a keystroke happened, and was it the slash
+        // key" is ever observed here — KeyInput carries a keycode, never the
+        // field's text (see the class Javadoc and CommandDraftDetector for
+        // why that distinction matters and checkNoTextAccess for how it's
+        // enforced mechanically).
+        TYPING_RATE.recordKeystroke(now);
+        if (isChat) {
+            COMMAND_DRAFT.onKeyPress(key.key() == GLFW.GLFW_KEY_SLASH);
+        }
     }
 
     private static boolean isTypingScreen(Screen screen) {
@@ -228,30 +262,10 @@ public final class ClientCueCapture {
         if (screen instanceof BookEditScreen) {
             return Activity.TYPING_BOOK;
         }
-        // The only remaining member of isTypingScreen().
-        return isCommandDraft((ChatScreen) screen) ? Activity.TYPING_COMMAND : Activity.TYPING_CHAT;
-    }
-
-    /**
-     * DESIGN.md §6/§10: "Komut tespiti için sohbet alanının yalnızca ilk
-     * karakterinin '/' olup olmadığına bakılabilir; o karakter hiçbir yere
-     * yazılmaz, saklanmaz, log'lanmaz. Alanın tamamını okuma, uzunluğunu
-     * bile taşıma." {@code ChatScreen.chatField} is {@code protected} (no
-     * public getter exists, verified via {@code javap}), so the only
-     * mixin-free way to reach it is the focused-element path every
-     * {@code Screen} already exposes: {@code ChatScreen} always focuses its
-     * text field on open. {@code text} never leaves this method's stack
-     * frame — only the boolean result is ever returned, and nothing beyond
-     * it (not the string, not its length) is stored, logged, or sent.
-     */
-    private static boolean isCommandDraft(ChatScreen chatScreen) {
-        Element focused = chatScreen.getFocused();
-        if (!(focused instanceof TextFieldWidget field)) {
-            // Focus left the field (rare edge case); can't safely tell, default to "chat, not a command".
-            return false;
-        }
-        String text = field.getText();
-        return !text.isEmpty() && text.charAt(0) == '/';
+        // The only remaining member of isTypingScreen(). Decided purely by
+        // CommandDraftDetector's keycode-only observation — see its Javadoc
+        // for why there is no field-content check here at all, by design.
+        return COMMAND_DRAFT.isCommandDraft() ? Activity.TYPING_COMMAND : Activity.TYPING_CHAT;
     }
 
     private static ScreenKind resolveScreenKind(Screen screen) {
