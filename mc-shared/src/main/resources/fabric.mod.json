@@ -10,6 +10,9 @@
   "entrypoints": {
     "main": [
       "dev.zsithious.socialcues.mcshared.SocialCuesInitializer"
+    ],
+    "client": [
+      "dev.zsithious.socialcues.mcshared.SocialCuesClientInitializer"
     ]
   },
   "depends": {

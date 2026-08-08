@@ -2,12 +2,23 @@ package dev.zsithious.socialcues.mcshared;
 
 import java.util.logging.Logger;
 
+import dev.zsithious.socialcues.mcshared.network.ServerHandshake;
+import dev.zsithious.socialcues.mcshared.network.SocialCuesChannels;
+
 import net.fabricmc.api.ModInitializer;
 
 /**
- * P0 stub entrypoint: no channel registration, no listeners, no render —
- * just proves the mod loads. DESIGN.md's actual behaviour (handshake,
- * dormant fallback, relay) starts at P1 (see DESIGN.md §14).
+ * Common entrypoint — runs on both client and dedicated server per
+ * fabric.mod.json's {@code "environment": "*"}. P1 (DESIGN.md §14):
+ * registers the {@code socialcues:v1} CustomPayload type for both
+ * directions and starts the server side of the handshake. No render, no
+ * relay yet.
+ *
+ * <p>Nothing reachable from here may reference client-only Minecraft/
+ * fabric-api classes (e.g. {@code ClientPlayNetworking}, {@code
+ * MinecraftClient}) — those live behind {@link SocialCuesClientInitializer}
+ * instead, so a dedicated server never tries to link a class that only
+ * exists on the client.
  */
 public final class SocialCuesInitializer implements ModInitializer {
 
@@ -15,6 +26,8 @@ public final class SocialCuesInitializer implements ModInitializer {
 
     @Override
     public void onInitialize() {
-        LOGGER.info("Social Cues loaded (P0 stub, no features yet)");
+        SocialCuesChannels.registerPayloadType();
+        ServerHandshake.register();
+        LOGGER.info("Social Cues loaded (P1: handshake wired, no relay/render yet)");
     }
 }
