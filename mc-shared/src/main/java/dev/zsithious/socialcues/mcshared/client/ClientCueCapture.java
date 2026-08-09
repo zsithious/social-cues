@@ -39,6 +39,8 @@ import net.minecraft.client.input.KeyInput;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.client.option.GameOptions;
 import net.minecraft.registry.Registries;
+import net.minecraft.screen.PlayerScreenHandler;
+import net.minecraft.screen.ScreenHandler;
 import net.minecraft.screen.ScreenHandlerType;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.PlayerInput;
@@ -114,6 +116,13 @@ public final class ClientCueCapture {
      */
     private static SharePrefsSource sharePrefs = SharePrefsSource.allEnabled();
 
+    /**
+     * Set once by {@link #tickGuarded} when capture throws. Deliberately not
+     * cleared by {@link #reset}: a capture bug is a property of this build, not
+     * of the connection, so rejoining would only re-throw and re-log it.
+     */
+    private static boolean captureDisabledByError;
+
     // Movement/look bookkeeping for AFK detection (DESIGN.md §6: "son girdi
     // (tuş/fare/hareket/bakış) zamanı").
     private static boolean havePreviousPose;
@@ -136,7 +145,7 @@ public final class ClientCueCapture {
 
     public static void register() {
         ScreenEvents.AFTER_INIT.register(ClientCueCapture::onScreenInit);
-        ClientTickEvents.END_CLIENT_TICK.register(ClientCueCapture::onClientTick);
+        ClientTickEvents.END_CLIENT_TICK.register(ClientCueCapture::tickGuarded);
     }
 
     /** The single seam P6's config UI is expected to call into; see the class Javadoc. */
@@ -202,6 +211,35 @@ public final class ClientCueCapture {
     }
 
     // ---- per-tick sampling --------------------------------------------------
+
+    /**
+     * Capture runs on the client tick, so anything it throws propagates into
+     * {@code MinecraftClient.tick} and takes the whole game down with a crash
+     * report — which is exactly what a single unreachable-looking null check in
+     * {@link #resolveScreenKind} did the first time this mod met a live server.
+     * DESIGN.md §11's stance ("a conflict must not crash the mod") is worth
+     * strictly more here than any cue is: this mod is cosmetic, and a cosmetic
+     * feature has no business ending someone's session. So capture gets exactly
+     * one chance — on an unexpected throwable it logs once, with the stack
+     * trace, and switches itself off for the rest of the session, leaving a
+     * player with no cues instead of no game.
+     *
+     * <p>This is a backstop, not a licence to stop handling known cases: every
+     * throwable that lands here is a bug to fix at its source, and the log line
+     * says so.
+     */
+    private static void tickGuarded(MinecraftClient client) {
+        if (captureDisabledByError) {
+            return;
+        }
+        try {
+            onClientTick(client);
+        } catch (Throwable t) {
+            captureDisabledByError = true;
+            LOGGER.log(Level.SEVERE, "socialcues: client cue capture threw and has been disabled for "
+                    + "this session; cues will not be sent. This is a bug — please report it.", t);
+        }
+    }
 
     private static void onClientTick(MinecraftClient client) {
         if (!ClientHandshakeNetworking.isActive()) {
@@ -285,14 +323,28 @@ public final class ClientCueCapture {
 
     private static ScreenKind resolveScreenKind(Screen screen) {
         if (screen instanceof HandledScreen<?> handled) {
-            ScreenHandlerType<?> type = handled.getScreenHandler().getType();
-            if (type == null) {
-                // javap-verified (1.21.11): PlayerScreenHandler (the survival
-                // inventory) passes null to the ScreenHandler super
-                // constructor's type parameter — it is the one vanilla
-                // handler that was never registered, so there is no registry
-                // id to hand to ScreenKindMapper at all.
+            ScreenHandler handler = handled.getScreenHandler();
+            // PlayerScreenHandler (the survival inventory) is the one vanilla
+            // handler that was never registered, so it holds a null type. Its
+            // *accessor* does not hand that null back: ScreenHandler#getType
+            // throws UnsupportedOperationException("Unable to construct this
+            // menu by type") instead. P3 read the constructor (which really
+            // does pass null) and wrote a `type == null` branch that therefore
+            // could never be reached — opening your own inventory crashed the
+            // client. Ask the question the accessor cannot answer safely by
+            // testing the type of the handler itself, before touching getType.
+            if (handler instanceof PlayerScreenHandler) {
                 return ScreenKind.INVENTORY;
+            }
+            ScreenHandlerType<?> type;
+            try {
+                type = handler.getType();
+            } catch (UnsupportedOperationException e) {
+                // Any modded handler built without a registered type throws the
+                // same way. There is no registry id to map, and DESIGN.md §4
+                // already has the bucket for "menu type not recognised": a
+                // cosmetic cue is never worth taking the game down for.
+                return ScreenKind.MODDED;
             }
             Identifier id = Registries.SCREEN_HANDLER.getId(type);
             return ScreenKindMapper.fromRegistryId(id == null ? null : id.toString());
