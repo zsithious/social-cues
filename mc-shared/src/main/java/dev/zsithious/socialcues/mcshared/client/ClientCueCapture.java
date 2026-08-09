@@ -33,6 +33,7 @@ import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.advancement.AdvancementsScreen;
 import net.minecraft.client.gui.screen.ingame.AbstractSignEditScreen;
 import net.minecraft.client.gui.screen.ingame.BookEditScreen;
+import net.minecraft.client.gui.screen.ingame.CreativeInventoryScreen;
 import net.minecraft.client.gui.screen.ingame.HandledScreen;
 import net.minecraft.client.gui.screen.option.OptionsScreen;
 import net.minecraft.client.input.KeyInput;
@@ -67,6 +68,11 @@ import org.lwjgl.glfw.GLFW;
  *       {@link BookEditScreen}) open beats everything else: one of the four
  *       {@code TYPING_*} activities, never {@code IN_SCREEN} or {@code AFK},
  *       for as long as it stays open.</li>
+ *   <li>Otherwise, the ESC/pause menu ({@link GameMenuScreen}) means
+ *       {@link Activity#AFK}, immediately — DESIGN.md §7 P5 hand-test fix.
+ *       Unlike every other screen, opening the pause menu is treated as
+ *       stepping away rather than as attention on a GUI (see {@link
+ *       #onClientTick}'s inline comment for the full reasoning).</li>
  *   <li>Otherwise, any other open {@link Screen} means {@link Activity#IN_SCREEN}
  *       (never {@code AFK} — an open menu means the player's attention is on
  *       it, however long they leave it sitting there).</li>
@@ -270,6 +276,23 @@ public final class ClientCueCapture {
                 // as "in a screen"; report nothing unusual for it.
                 activity = Activity.NORMAL;
             }
+        } else if (screen instanceof GameMenuScreen) {
+            // DESIGN.md §7 P5 hand-test fix ("esc menüsündeykende chest guisi
+            // açılıyor. escdeyken afkymış gibi çalışsın"): the ESC/pause menu
+            // must never surface as Activity.IN_SCREEN -- to anyone watching,
+            // a paused player is exactly as absent as an idle one, and the old
+            // behaviour drew the held-panel/container-GUI cue over what is, to
+            // every other player, someone who is not even looking at the
+            // screen. Resolved as AFK immediately (no need to wait out the
+            // idle timer -- opening the pause menu is itself an unambiguous
+            // "stepped away" signal), gated on the same PolicyBits.IDLE bit
+            // every other AFK signal already respects. ScreenKind stays
+            // UNKNOWN (the default above): it has no meaning for AFK. This
+            // check has to come after the typing-screen branch (a chat/sign/
+            // book screen always wins) and before the generic "any other
+            // screen" branch below (which would otherwise catch GameMenuScreen
+            // too, since it is a Screen).
+            activity = hasBit(effectiveBits, PolicyBits.IDLE) ? Activity.AFK : Activity.NORMAL;
         } else if (screen != null) {
             if (hasBit(effectiveBits, PolicyBits.SCREENS)) {
                 activity = Activity.IN_SCREEN;
@@ -334,6 +357,25 @@ public final class ClientCueCapture {
             // client. Ask the question the accessor cannot answer safely by
             // testing the type of the handler itself, before touching getType.
             if (handler instanceof PlayerScreenHandler) {
+                return ScreenKind.INVENTORY;
+            }
+            // DESIGN.md §7 P5 second hand-test fix ("düz oyuncu envanteri
+            // açıkken sandık GUI'si görünüyor"): creative mode's own inventory
+            // is a SECOND handler this table can never be asked about safely.
+            // javap -c on CreativeInventoryScreen.CreativeScreenHandler's
+            // constructor shows the exact same shape as PlayerScreenHandler's
+            // -- it calls `ScreenHandler.<init>(null, 0)`, i.e. it was never
+            // registered either, so handler.getType() below would throw the
+            // identical UnsupportedOperationException and fall into the
+            // MODDED branch, which this table's fallback then renders as a
+            // small container -- a chest-shaped panel over a player's own
+            // creative inventory. The screen (not the handler) is what
+            // reliably tells the two apart, the same way PlayerScreenHandler
+            // does above -- checked before getType(), same reasoning. No new
+            // ScreenKind: a creative inventory is still, fundamentally, the
+            // player's own inventory, and the signal this mod shares is
+            // already just "in their inventory", not which game mode.
+            if (screen instanceof CreativeInventoryScreen) {
                 return ScreenKind.INVENTORY;
             }
             ScreenHandlerType<?> type;

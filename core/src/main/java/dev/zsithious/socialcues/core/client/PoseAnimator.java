@@ -40,6 +40,24 @@ import dev.zsithious.socialcues.core.state.PlayerCue;
  * ticks (fractional, i.e. already including the frame's partial tick), so the
  * motion is smooth between ticks and every player has a different phase
  * instead of the whole server bobbing in unison.
+ *
+ * <p><b>Model-space sign rule (DESIGN.md §7 P5 hand-test lesson — read this
+ * before touching any yaw/roll constant below):</b> {@code javap}-verified
+ * against {@code ModelPart}: a limb's rotations compose as {@code Rz(roll) ·
+ * Ry(yaw) · Rx(pitch)} and its long axis is model {@code +Y} (down). The
+ * player faces model {@code -Z}; the player's own right is model {@code -X}.
+ * On both arms, <b>positive yaw and positive roll swing the limb's tip toward
+ * the player's right</b> — roll's effect additionally scales by
+ * {@code cos(pitch)}. That means "tuck this hand in toward the body" is
+ * <b>negative</b> yaw/roll on the {@code rightArm} and <b>positive</b>
+ * yaw/roll on the {@code leftArm} — never the other way around, and never the
+ * same sign on both arms. (Anchor: vanilla's own crossbow-hold animation gives
+ * the right arm {@code yaw=-0.3} and the left arm {@code yaw=+0.6} to bring
+ * both hands together at the chest.) A P5 hand test shipped every yaw/roll
+ * constant below with exactly the opposite sign on both arms, which reads as
+ * "hands flung out to the sides" instead of "hands tucked in" — see DESIGN.md
+ * §7's "P5 el testi bulguları" section for the full account. Every pose below
+ * now follows the rule as written; if you add a new one, follow it too.
  */
 public final class PoseAnimator {
 
@@ -51,37 +69,72 @@ public final class PoseAnimator {
     /**
      * Shoulder rotation for hands out on a keyboard (~60° forward). This is
      * deliberately shallower than the in-screen pose: a keyboard sits out in
-     * front of you at desk height, not clasped up against your chest.
+     * front of you at desk height, not clasped up against your chest. At this
+     * pitch the hand sits roughly 0.65 blocks in front of the shoulder, about
+     * y≈1.00 — see {@code CueScreenPanelRenderer}'s panel placement, tuned to
+     * sit just behind that point.
      */
     private static final float TYPING_ARM_PITCH = -1.05f;
-    /** Barely any inward tuck — hands rest about shoulder-width apart on the keys, they do not meet. */
-    private static final float TYPING_ARM_ROLL = 0.06f;
-    private static final float TYPING_ARM_YAW = 0.10f;
-    /** Head tips down to the keyboard and the window above it (~26°). */
-    private static final float TYPING_HEAD_PITCH = 0.45f;
+    /**
+     * Inward tuck at the elbow — DESIGN.md §7 P5 hand-test fix: applied with
+     * the model-space sign rule documented on this class (negative on the
+     * right arm, positive on the left), not the same sign on both, which is
+     * what made the original pose fling the hands outward instead of tucking
+     * them in.
+     */
+    private static final float TYPING_ARM_ROLL = 0.05f;
+    /**
+     * Inward yaw so both hands land close together at chest width instead of
+     * shoulder width (~0.625 blocks apart at the shoulders down to ~0.47
+     * blocks at the hands) — same sign-rule fix as {@link #TYPING_ARM_ROLL}.
+     */
+    private static final float TYPING_ARM_YAW = 0.12f;
+    /** Head tips down to the keyboard and the window above it (~24°) — see {@link PoseFrame#headAimPitch()}. */
+    private static final float TYPING_HEAD_AIM_PITCH = 0.42f;
 
-    /** Key taps per second at {@code intensity} 0 … 255. */
-    private static final float TYPING_MIN_HZ = 2.2f;
-    private static final float TYPING_MAX_HZ = 7.0f;
+    /**
+     * Key taps per second at {@code intensity} 0 … 255. DESIGN.md §7 P5
+     * hand-test fix: a tap is a wrist flick, not an arm swing, so this reads
+     * faster and shallower (see {@link #TYPING_MIN_TAP}/{@link #TYPING_MAX_TAP})
+     * than the original tuning.
+     */
+    private static final float TYPING_MIN_HZ = 3.5f;
+    private static final float TYPING_MAX_HZ = 9.0f;
     /** How far a hand dips on a tap, likewise scaled by intensity — faster typing is visibly busier. */
-    private static final float TYPING_MIN_TAP = 0.11f;
-    private static final float TYPING_MAX_TAP = 0.20f;
+    private static final float TYPING_MIN_TAP = 0.06f;
+    private static final float TYPING_MAX_TAP = 0.11f;
     /** Sideways reach across the keys: hands do not stay on home row. */
-    private static final float TYPING_REACH_YAW = 0.09f;
+    private static final float TYPING_REACH_YAW = 0.045f;
     /** Slow whole-body settle laid under the tapping, so the pose is never perfectly still. */
     private static final float TYPING_DRIFT_HZ = 0.37f;
-    private static final float TYPING_DRIFT = 0.035f;
+    private static final float TYPING_DRIFT = 0.02f;
+    /**
+     * The sideways "dart" a hand gets on every tap, on top of the vertical dip
+     * — DESIGN.md §7 P5 hand-test fix: without it, hands only bob up and down
+     * in place, which does not read as moving between keys.
+     */
+    private static final float TYPING_TAP_DART_YAW = 0.03f;
+    /**
+     * DESIGN.md §7 P5 second hand-test fix ("iki kol aynı anda aynı yöne
+     * hareket ediyor, titriyor gibi"): how far each hand's own tap rate is
+     * allowed to drift from the shared {@code hz}, ±18%. See {@link
+     * #tapStream}'s own Javadoc for why a per-hand rate (not just a per-hand
+     * hash) is what actually breaks the two hands out of lockstep.
+     */
+    private static final float TYPING_RATE_JITTER = 0.18f;
 
-    private static final float TYPING_SCREEN_TILT = 0.18f;
-    private static final float TYPING_SCREEN_RISE = 0.62f;
+    private static final float TYPING_SCREEN_TILT = 0.12f;
+    private static final float TYPING_SCREEN_RISE = 0.88f;
 
     // -------------------------------------------- in a screen (a container GUI)
 
     /** The holding arm: up at reading height and held there. */
-    private static final float SCREEN_HOLD_PITCH = -1.40f;
-    private static final float SCREEN_HOLD_ROLL = 0.22f;
+    private static final float SCREEN_HOLD_PITCH = -1.30f;
+    /** Left arm (holds); model-space sign rule: inward tuck is POSITIVE roll on the left. */
+    private static final float SCREEN_HOLD_ROLL = 0.16f;
     /** The working arm's resting point, before the reaching below moves it around the panel. */
-    private static final float SCREEN_WORK_PITCH = -1.28f;
+    private static final float SCREEN_WORK_PITCH = -1.22f;
+    /** Right arm (works); model-space sign rule: inward tuck is NEGATIVE roll on the right. */
     private static final float SCREEN_WORK_ROLL = 0.10f;
 
     /** How long the working hand takes to settle on a new slot, and how long it lingers there. */
@@ -89,13 +142,15 @@ public final class PoseAnimator {
     private static final float SCREEN_REACH_MOVE_FRACTION = 0.45f;
     /** Reach envelope: how far the working hand ranges over the panel. */
     private static final float SCREEN_REACH_PITCH = 0.30f;
-    private static final float SCREEN_REACH_YAW = 0.36f;
+    /** Kept inside the (now narrower, DESIGN.md §7 P5 hand-test fix) panel's own width. */
+    private static final float SCREEN_REACH_YAW = 0.26f;
     private static final float SCREEN_REACH_ROLL = 0.14f;
 
-    private static final float SCREEN_HEAD_PITCH = 0.30f;
-    /** Resting lean of the panel's top edge toward the player (~26°). */
-    private static final float SCREEN_BASE_TILT = 0.45f;
-    private static final float SCREEN_RISE = 0.78f;
+    /** Head-aim pitch target for this pose — see {@link PoseFrame#headAimPitch()}, which now drives the actual look direction. */
+    private static final float SCREEN_HEAD_AIM_PITCH = 0.32f;
+    /** Resting lean of the panel's top edge toward the player (~13°) — DESIGN.md §7 P5 hand-test fix: was far too upright-reading before. */
+    private static final float SCREEN_BASE_TILT = 0.22f;
+    private static final float SCREEN_RISE = 0.95f;
     /** The hand-held wobble: slow, small, split across two incommensurate frequencies so it never repeats. */
     private static final float SCREEN_WOBBLE_HZ = 0.33f;
     private static final float SCREEN_WOBBLE_HZ_2 = 0.21f;
@@ -170,29 +225,62 @@ public final class PoseAnimator {
         float seconds = ageTicks / TICKS_PER_SECOND;
 
         float hz = lerp(TYPING_MIN_HZ, TYPING_MAX_HZ, busy);
-        float tap = lerp(TYPING_MIN_TAP, TYPING_MAX_TAP, busy);
-        float drift = sine(seconds, TYPING_DRIFT_HZ) * TYPING_DRIFT;
+        float tapAmount = lerp(TYPING_MIN_TAP, TYPING_MAX_TAP, busy);
 
-        // Each hand runs its own tap stream, offset in the hash space so they are
-        // uncorrelated: sometimes they land together, mostly they do not.
-        float rightTap = tapStream(seconds, hz, seed) * tap;
-        float leftTap = tapStream(seconds, hz, seed ^ 0x5bf03635) * tap;
+        // DESIGN.md §7 P5 second hand-test fix: one shared `drift` added to
+        // BOTH arms is common-mode motion -- exactly the kind of thing that
+        // reads as "the two arms moving together" from outside, independent
+        // of whatever the tap streams below are doing. Each arm now gets its
+        // own phase-shifted copy instead (same frequency, different offset
+        // into the sine, derived from the seed the same way every other
+        // per-hand split in this method already is).
+        float rightDrift = sine(seconds + noise(seed) * 3f, TYPING_DRIFT_HZ) * TYPING_DRIFT;
+        float leftDrift = sine(seconds + noise(seed ^ 0x1b873593) * 3f, TYPING_DRIFT_HZ) * TYPING_DRIFT;
+
+        // Each hand runs its own tap stream -- see tapStream's own Javadoc for
+        // why that now has to mean its own time grid (rate + phase), not just
+        // its own hash: two calls sharing `seconds`/`hz` land on the exact
+        // same step/within every time, so only WHETHER a step taps differed
+        // between hands, never WHEN -- read from outside as "both arms
+        // twitching in sync" (DESIGN.md §7 P5 second hand-test finding).
+        Tap rightTap = tapStream(seconds, hz, seed);
+        Tap leftTap = tapStream(seconds, hz, seed ^ 0x5bf03635);
         // ...and its own slow wander across the keys.
         float rightReach = noiseAt(seconds, 1.1f, seed ^ 0x27d4eb2f) * TYPING_REACH_YAW;
         float leftReach = noiseAt(seconds, 1.1f, seed ^ 0x165667b1) * TYPING_REACH_YAW;
 
+        // Model-space sign rule (see this class' Javadoc): tucking a hand IN
+        // toward the body's centre is negative yaw/roll on the right arm,
+        // positive on the left -- DESIGN.md §7 P5 hand-test fix, both arms
+        // used to carry the same sign here and flung the hands outward instead.
         Limb right = new Limb(
-                TYPING_ARM_PITCH + rightTap + drift,
-                TYPING_ARM_YAW + rightReach,
-                TYPING_ARM_ROLL);
-        Limb left = new Limb(
-                TYPING_ARM_PITCH + leftTap + drift,
-                -TYPING_ARM_YAW + leftReach,
+                TYPING_ARM_PITCH + rightTap.dip() * tapAmount + rightDrift,
+                -TYPING_ARM_YAW + rightReach + rightTap.dart(),
                 -TYPING_ARM_ROLL);
-        Limb head = new Limb(TYPING_HEAD_PITCH + drift * 0.5f, drift * 0.6f, 0f);
+        Limb left = new Limb(
+                TYPING_ARM_PITCH + leftTap.dip() * tapAmount + leftDrift,
+                TYPING_ARM_YAW + leftReach + leftTap.dart(),
+                TYPING_ARM_ROLL);
+        // Only the small living wobble here -- the actual "look down at the
+        // keyboard" direction is now driven by the absolute headAim target
+        // below (DESIGN.md §7 P5 hand-test fix: an additive-only offset can
+        // never override wherever the head already happened to be facing).
+        // Uses the average of both arms' drift, not either one alone, so the
+        // head's tiny settle does not quietly favour whichever hand happens
+        // to be computed first.
+        float headDrift = (rightDrift + leftDrift) * 0.5f;
+        Limb head = new Limb(headDrift * 0.5f, headDrift * 0.6f, 0f);
 
+        // headAim ramps in at twice the rate of the rest of the pose (see
+        // PoseFrame's Javadoc) so the head is already looking at the keyboard
+        // by the time the arms have barely started rising -- "look, then
+        // reach", the order a person actually does it in, and the fix for
+        // the hand-test complaint that the head could stay facing wherever it
+        // last was through an entire typing animation.
+        float headAim = clamp01(w * 2f);
         return scale(right, left, head, Limb.ZERO,
-                1f, TYPING_SCREEN_TILT, TYPING_SCREEN_RISE, w);
+                1f, TYPING_SCREEN_TILT, TYPING_SCREEN_RISE, w,
+                TYPING_HEAD_AIM_PITCH, 0f, headAim);
     }
 
     /**
@@ -205,28 +293,39 @@ public final class PoseAnimator {
         float wobble = sine(seconds, SCREEN_WOBBLE_HZ);
         float wobble2 = sine(seconds, SCREEN_WOBBLE_HZ_2);
 
-        // The holding arm gets only the panel's own wobble — it is holding, not working.
+        // The holding arm gets only the panel's own wobble — it is holding, not
+        // working. Left arm; model-space sign rule (see this class' Javadoc):
+        // tucking IN toward the body is POSITIVE roll on the left arm.
         Limb hold = new Limb(
                 SCREEN_HOLD_PITCH + wobble * SCREEN_WOBBLE_ARM,
                 0f,
-                -SCREEN_HOLD_ROLL);
+                SCREEN_HOLD_ROLL);
 
         // The working arm moves from slot to slot: a quick settle, then a pause,
         // then off to somewhere else — never a continuous sweep.
         float reachPitch = reach(seconds, seed) * SCREEN_REACH_PITCH;
         float reachYaw = reach(seconds, seed ^ 0x9e3779b9) * SCREEN_REACH_YAW;
         float reachRoll = reach(seconds, seed ^ 0x85ebca6b) * SCREEN_REACH_ROLL;
+        // Right arm; model-space sign rule: tucking IN is NEGATIVE roll on the right.
         Limb work = new Limb(
                 SCREEN_WORK_PITCH + reachPitch + wobble * SCREEN_WOBBLE_ARM,
                 reachYaw,
-                SCREEN_WORK_ROLL + reachRoll);
+                -SCREEN_WORK_ROLL + reachRoll);
 
-        Limb head = new Limb(SCREEN_HEAD_PITCH + wobble2 * 0.03f, wobble2 * 0.05f, 0f);
+        // Only the small living wobble here -- see typing()'s identical comment:
+        // the actual look-at-the-panel direction is now the absolute headAim
+        // target below, not this additive offset.
+        Limb head = new Limb(wobble2 * 0.03f, wobble2 * 0.05f, 0f);
         float tilt = SCREEN_BASE_TILT + wobble * SCREEN_WOBBLE_TILT + wobble2 * (SCREEN_WOBBLE_TILT * 0.5f);
+
+        // headAim ramps in at twice the rate of the rest of the pose -- see
+        // typing()'s identical comment and PoseFrame's Javadoc.
+        float headAim = clamp01(w * 2f);
 
         // The right arm works, the left holds — DESIGN.md pins neither, so this
         // simply follows the majority-handed reading of the demo material.
-        return scale(work, hold, head, Limb.ZERO, 1f, tilt, SCREEN_RISE, w);
+        return scale(work, hold, head, Limb.ZERO, 1f, tilt, SCREEN_RISE, w,
+                SCREEN_HEAD_AIM_PITCH, 0f, headAim);
     }
 
     /**
@@ -263,34 +362,96 @@ public final class PoseAnimator {
         return scale(right, left, head, body, 0f, 0f, 0f, w);
     }
 
+    /** Used by {@code idle()}, which has no head-aim target: forwards to the full overload with everything zeroed. */
     private static PoseFrame scale(Limb right, Limb left, Limb head, Limb body,
             float screenWeight, float screenTilt, float screenRise, float w) {
+        return scale(right, left, head, body, screenWeight, screenTilt, screenRise, w, 0f, 0f, 0f);
+    }
+
+    /**
+     * @param headAimPitch  absolute head-aim pitch target, unscaled (see {@link PoseFrame}'s Javadoc)
+     * @param headAimYaw    absolute head-aim yaw target, unscaled
+     * @param headAim       0..1 blend strength, already a function of {@code w} (see callers) -- deliberately
+     *                      NOT multiplied by {@code w} again here, the same way {@code screenRise} is a
+     *                      position rather than an intensity and is left alone below
+     */
+    private static PoseFrame scale(Limb right, Limb left, Limb head, Limb body,
+            float screenWeight, float screenTilt, float screenRise, float w,
+            float headAimPitch, float headAimYaw, float headAim) {
         return new PoseFrame(
                 right.scaled(w), left.scaled(w), head.scaled(w), body.scaled(w),
-                screenWeight * w, screenTilt * w, screenRise);
+                screenWeight * w, screenTilt * w, screenRise,
+                headAimPitch, headAimYaw, headAim);
     }
 
     // ------------------------------------------------------------- motion tools
+
+    /**
+     * One hand's tap this instant: the vertical dip (unitless envelope, 0..1-ish,
+     * the caller scales it into radians by the intensity-driven tap amplitude)
+     * and a small lateral "dart" (already in radians) that moves the hand toward
+     * a different key rather than just bobbing it in place. Both come from the
+     * same step so a tap's dart rises and falls with its own dip, instead of
+     * the hand darting sideways during the pauses between taps too.
+     */
+    private record Tap(float dip, float dart) {
+        private static final Tap NONE = new Tap(0f, 0f);
+    }
 
     /**
      * A tap: mostly resting, with a quick dip when a key goes down. Modelled as
      * a sharp attack and slower release rather than a sine, because that is
      * what a finger actually does — and the tap only happens on steps the hash
      * selects, so the rhythm is uneven.
+     *
+     * <p><b>DESIGN.md §7 P5 second hand-test fix — "iki kol aynı anda aynı
+     * yöne hareket ediyor, titriyor gibi".</b> {@code typing()} calls this
+     * once per hand with the same {@code seconds}/{@code hz} and only a
+     * different {@code seed}. That used to be enough to make the two calls
+     * land on the exact same {@code step}/{@code within} every single time —
+     * the seed only changes {@code noise(step * 31 + seed)} (whether THIS
+     * step taps) and {@code noise(step * 17 + seed)} (how hard), never {@code
+     * step} or {@code within} themselves, because those come from {@code t =
+     * seconds * hz} alone. Giving two hands independent hashes but one shared
+     * time grid is not independence: whenever the hash happened to select
+     * both hands' step, both attacked and released in perfect lockstep,
+     * which is exactly what read as "twitching together" from outside. The
+     * fix has to change the grid itself, not just what rides on it: each
+     * call now derives its own {@code rate} (±{@link #TYPING_RATE_JITTER}
+     * around {@code hz}) and its own {@code phase} offset from {@code seed},
+     * so the two hands' steps constantly drift relative to each other and
+     * never stay locked for long.
      */
-    private static float tapStream(float seconds, float hz, int seed) {
-        float t = seconds * hz;
+    private static Tap tapStream(float seconds, float hz, int seed) {
+        float rate = hz * (1f + noise(seed ^ 0x7f4a7c15) * TYPING_RATE_JITTER);
+        float phase = noise(seed ^ 0x2545f491) * 0.5f + 0.5f; // 0..1, in step units
+        float t = seconds * rate + phase;
         int step = (int) Math.floor(t);
         float within = t - step;
-        // Roughly seven steps in ten carry a tap; the rest are the pauses that
-        // stop the rhythm from being a metronome.
-        if (noise(step * 31 + seed) > 0.4f) {
-            return 0f;
+        // DESIGN.md §7 P5 hand-test fix: most steps now carry a tap (only
+        // noise values above 0.55, out of noise()'s roughly -1..1 range, skip
+        // one) -- the original 0.4 threshold read as too sparse/hesitant for
+        // "typing", the pauses that stop it from being a metronome are still
+        // there, just rarer.
+        if (noise(step * 31 + seed) > 0.55f) {
+            return Tap.NONE;
         }
-        float strength = 0.6f + 0.4f * (noise(step * 17 + seed) * 0.5f + 0.5f);
-        // Attack over the first fifth of the step, release over the rest.
-        float shape = within < 0.2f ? (within / 0.2f) : (1f - (within - 0.2f) / 0.8f);
-        return shape * strength;
+        // DESIGN.md §7 P5 second hand-test fix: a wider spread of tap
+        // strengths (some taps now land barely visible) -- every tap landing
+        // at roughly the same depth read as a uniform buzz rather than
+        // distinct key presses.
+        float strength = 0.35f + 0.65f * (noise(step * 17 + seed) * 0.5f + 0.5f);
+        // Attack over the first ~15% of the step (was 20%): a sharper flick,
+        // release over the rest -- DESIGN.md §7 P5 hand-test fix, part of
+        // making taps read as quick key presses rather than slow swings.
+        float shape = within < 0.15f ? (within / 0.15f) : (1f - (within - 0.15f) / 0.85f);
+        float dip = shape * strength;
+        // DESIGN.md §7 P5 hand-test fix: a small sideways kick on the same
+        // step's hash, scaled by this tap's own envelope so it rises and
+        // falls with the dip -- what makes the hand read as moving between
+        // keys instead of just bobbing the same spot up and down.
+        float dart = noise(step * 13 + seed) * TYPING_TAP_DART_YAW * dip;
+        return new Tap(dip, dart);
     }
 
     /**

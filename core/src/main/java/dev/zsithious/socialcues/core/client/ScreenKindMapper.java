@@ -45,19 +45,30 @@ import dev.zsithious.socialcues.core.state.ScreenKind;
 public final class ScreenKindMapper {
 
     private static final Map<String, ScreenKind> BY_REGISTRY_ID = Map.ofEntries(
-            // Plain chests / double chests / hoppers / shulker boxes / the
-            // dropper-dispenser 3x3 grid / the Crafter block: all generic
-            // item-storage grids with no dedicated ScreenKind of their own.
-            Map.entry("minecraft:generic_9x1", ScreenKind.CONTAINER),
-            Map.entry("minecraft:generic_9x2", ScreenKind.CONTAINER),
-            Map.entry("minecraft:generic_9x3", ScreenKind.CONTAINER),
+            // DESIGN.md §7 P5 hand-test fix (HATA7): a single chest (9x1..9x3)
+            // used to map to the same ScreenKind.CONTAINER as a double chest,
+            // which meant the held panel always showed generic_54.png -- a
+            // double chest's texture -- even for a plain single chest. 9x1/9x2
+            // are smaller still, so they get the same "small container" kind
+            // rather than a third bucket nothing asked for.
+            Map.entry("minecraft:generic_9x1", ScreenKind.CONTAINER_SMALL),
+            Map.entry("minecraft:generic_9x2", ScreenKind.CONTAINER_SMALL),
+            Map.entry("minecraft:generic_9x3", ScreenKind.CONTAINER_SMALL),
+            // 9x4/9x5/9x6 stay CONTAINER -- large enough that the double-chest
+            // texture is still the right visual weight class.
             Map.entry("minecraft:generic_9x4", ScreenKind.CONTAINER),
             Map.entry("minecraft:generic_9x5", ScreenKind.CONTAINER),
             Map.entry("minecraft:generic_9x6", ScreenKind.CONTAINER),
-            Map.entry("minecraft:generic_3x3", ScreenKind.CONTAINER),
-            Map.entry("minecraft:crafter_3x3", ScreenKind.CONTAINER),
-            Map.entry("minecraft:hopper", ScreenKind.CONTAINER),
-            Map.entry("minecraft:shulker_box", ScreenKind.CONTAINER),
+            // The dropper/dispenser 3x3 grid and the Crafter block: both a 3x3
+            // item grid, closest visually to the dispenser GUI (Crafter has no
+            // dedicated ScreenKind of its own -- see ScreenPanelTextures for
+            // the one real, dedicated crafter.png this project found but did
+            // not wire in, since DESIGN.md's brief for this fix explicitly
+            // grouped both under one kind).
+            Map.entry("minecraft:generic_3x3", ScreenKind.DISPENSER),
+            Map.entry("minecraft:crafter_3x3", ScreenKind.DISPENSER),
+            Map.entry("minecraft:hopper", ScreenKind.HOPPER),
+            Map.entry("minecraft:shulker_box", ScreenKind.SHULKER),
             // Grindstone has no dedicated ScreenKind; it is a container-like
             // repair UI, closest in kind to a generic container screen.
             Map.entry("minecraft:grindstone", ScreenKind.CONTAINER),

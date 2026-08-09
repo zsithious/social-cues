@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
@@ -163,7 +165,83 @@ class PoseAnimatorTest {
         assertNotEquals(idleA, idleB);
     }
 
+    // ------------------------------------------------------- headAim (DESIGN.md §7 P5 hand-test fix)
+
+    /**
+     * DESIGN.md §7 P5 hand-test fix: {@code headAim = clamp01(w * 2f)}, so it
+     * must saturate to exactly 1 once the pose's own weight reaches 0.5 --
+     * "the head is already looking at the target by the time the rest of the
+     * pose is only half blended in" is the whole point of the 2x rate.
+     */
+    @Test
+    void headAimReachesFullStrengthAtHalfWeightForTypingAndInScreen() {
+        UUID id = UUID.randomUUID();
+        PlayerCue typing = cue(id, Activity.TYPING_CHAT, 128, 0);
+        PlayerCue inScreen = cue(id, Activity.IN_SCREEN, 0, 0);
+
+        assertEquals(1f, PoseAnimator.frameFor(typing, 10f, 0.5f).headAim(), 1e-6f);
+        assertEquals(1f, PoseAnimator.frameFor(inScreen, 10f, 0.5f).headAim(), 1e-6f);
+        // And it is not saturated yet just below half weight -- confirms the
+        // 2x rule rather than some other curve that also happens to hit 1 at 0.5.
+        assertEquals(0.8f, PoseAnimator.frameFor(typing, 10f, 0.4f).headAim(), 1e-6f);
+        assertEquals(0.8f, PoseAnimator.frameFor(inScreen, 10f, 0.4f).headAim(), 1e-6f);
+    }
+
+    @Test
+    void headAimIsZeroAtWeightZeroAndForIdle() {
+        UUID id = UUID.randomUUID();
+        assertEquals(0f, PoseFrame.NONE.headAim(), "PoseFrame.NONE must carry no head-aim target");
+
+        PlayerCue typing = cue(id, Activity.TYPING_CHAT, 128, 0);
+        assertEquals(0f, PoseAnimator.frameFor(typing, 10f, 0f).headAim());
+
+        // Idle deliberately keeps the old additive-only droop (DESIGN.md §7 P5
+        // hand-test fix's own brief: "idle() (AFK): headAim kullanma") -- it
+        // must never set a head-aim target, at any weight.
+        PlayerCue idle = cue(id, Activity.AFK, 0, 0);
+        assertEquals(0f, PoseAnimator.frameFor(idle, 10f, 1f).headAim(),
+                "idle must not use headAim, only the additive droop");
+    }
+
+    @Test
+    void headAimTargetsMatchTheDocumentedPitchesAndFaceStraightAtTheBody() {
+        UUID id = UUID.randomUUID();
+        PlayerCue typing = cue(id, Activity.TYPING_CHAT, 128, 0);
+        PlayerCue inScreen = cue(id, Activity.IN_SCREEN, 0, 0);
+
+        PoseFrame typingFrame = PoseAnimator.frameFor(typing, 10f, 1f);
+        assertEquals(0.42f, typingFrame.headAimPitch(), 1e-6f);
+        assertEquals(0f, typingFrame.headAimYaw(), 1e-6f);
+
+        PoseFrame inScreenFrame = PoseAnimator.frameFor(inScreen, 10f, 1f);
+        assertEquals(0.32f, inScreenFrame.headAimPitch(), 1e-6f);
+        assertEquals(0f, inScreenFrame.headAimYaw(), 1e-6f);
+    }
+
     // ---------------------------------------------------------------------- typing
+
+    /**
+     * DESIGN.md §7 P5 hand-test fix, the regression test for HATA1: hands must
+     * tuck IN toward the body, which the model-space sign rule (see {@code
+     * PoseAnimator}'s own class Javadoc) means negative yaw on the right arm,
+     * positive on the left -- never the same sign on both. Sampled at max
+     * intensity (worst case for the reach/dart perturbations that ride on top
+     * of the base yaw) across several seconds so a single lucky instant cannot
+     * hide a sign regression.
+     */
+    @Test
+    void typingHandsTuckInwardRightArmYawNegativeLeftArmYawPositive() {
+        UUID id = UUID.randomUUID();
+        PlayerCue cue = cue(id, Activity.TYPING_CHAT, 255, 0);
+
+        for (float seconds = 0f; seconds <= 8f; seconds += 0.05f) {
+            PoseFrame frame = PoseAnimator.frameFor(cue, seconds * TICKS_PER_SECOND, 1f);
+            assertTrue(frame.rightArm().yaw() < 0f,
+                    "expected right arm yaw < 0 (tucked in) at t=" + seconds + ", was " + frame.rightArm().yaw());
+            assertTrue(frame.leftArm().yaw() > 0f,
+                    "expected left arm yaw > 0 (tucked in) at t=" + seconds + ", was " + frame.leftArm().yaw());
+        }
+    }
 
     @Test
     void typingHasAScreen() {
@@ -275,6 +353,72 @@ class PoseAnimatorTest {
         return peaks;
     }
 
+    /**
+     * DESIGN.md §7 P5 second hand-test fix, the regression test for HATA A
+     * ("iki kol aynı anda aynı yöne hareket ediyor, titriyor gibi"). The bug
+     * was never in the per-hand hash -- two different seeds already existed
+     * before this fix -- it was that both {@code tapStream} calls shared one
+     * time grid ({@code seconds * hz}, identical for both hands), so whenever
+     * the hash happened to select a tap for both hands on the same step,
+     * their attack/release envelopes peaked at the exact same instant. This
+     * checks the actual fix (independent rate + phase per hand, see {@code
+     * PoseAnimator.tapStream}'s own Javadoc), not just the tuned constants:
+     * over a long, finely-sampled window, only a small minority of one
+     * hand's tap peaks should land within a couple of samples of the other
+     * hand's nearest peak. A shared time grid would put a large majority of
+     * them there instead (whenever both hands' hash selected the same step).
+     */
+    @Test
+    void typingHandsTapOnIndependentTimeGridsNotJustIndependentHashes() {
+        UUID id = UUID.randomUUID();
+        // Max intensity: fastest tap rate, most peaks to sample from, and the
+        // worst case for accidental coincidence (more taps per second means
+        // more opportunities for a shared grid to line two of them up).
+        PlayerCue cue = cue(id, Activity.TYPING_CHAT, 255, 0);
+
+        float stepSeconds = 1f / 400f;
+        float windowSeconds = 20f;
+        List<Float> rightPeaks = peakTimes(cue, windowSeconds, stepSeconds, frame -> frame.rightArm().pitch());
+        List<Float> leftPeaks = peakTimes(cue, windowSeconds, stepSeconds, frame -> frame.leftArm().pitch());
+
+        assertTrue(rightPeaks.size() > 10 && leftPeaks.size() > 10,
+                "expected plenty of taps to sample from over " + windowSeconds + "s: "
+                        + "right=" + rightPeaks.size() + " left=" + leftPeaks.size());
+
+        // A couple of sample steps of slack: under the old shared-grid bug a
+        // coincident peak lands at EXACTLY the same true instant regardless of
+        // sampling, so two independently-detected peaks for it can differ by
+        // at most about one sample step each -- comfortably caught by this
+        // tolerance. Under the fix, peak spacing is at least ~1/TYPING_MAX_HZ
+        // apart (~0.11s), far larger than this tolerance, so a genuine
+        // coincidence this close is not expected to happen by chance.
+        float coincidenceTolerance = stepSeconds * 2f;
+        long coincidences = rightPeaks.stream()
+                .filter(rightTime -> leftPeaks.stream().anyMatch(leftTime -> Math.abs(leftTime - rightTime) <= coincidenceTolerance))
+                .count();
+        double coincidenceFraction = (double) coincidences / rightPeaks.size();
+
+        assertTrue(coincidenceFraction < 0.3,
+                "expected only a small minority of right-hand tap peaks to coincide with a left-hand peak "
+                        + "(a shared time grid would put a majority there): "
+                        + coincidences + "/" + rightPeaks.size() + " = " + coincidenceFraction);
+    }
+
+    private static List<Float> peakTimes(PlayerCue cue, float windowSeconds, float stepSeconds, FloatExtractor extractor) {
+        List<Float> peaks = new ArrayList<>();
+        float previous = extractor.apply(PoseAnimator.frameFor(cue, 0f, 1f));
+        float current = extractor.apply(PoseAnimator.frameFor(cue, stepSeconds * TICKS_PER_SECOND, 1f));
+        for (float seconds = 2 * stepSeconds; seconds <= windowSeconds; seconds += stepSeconds) {
+            float next = extractor.apply(PoseAnimator.frameFor(cue, seconds * TICKS_PER_SECOND, 1f));
+            if (current > previous && current > next) {
+                peaks.add(seconds - stepSeconds); // the sample time `current` was taken at
+            }
+            previous = current;
+            current = next;
+        }
+        return peaks;
+    }
+
     @Test
     void allFourTypingActivitiesProduceTheSamePoseFamily() {
         UUID id = UUID.randomUUID();
@@ -335,6 +479,41 @@ class PoseAnimatorTest {
             assertTrue(Math.abs(sumOfPitches) > 0.05f,
                     "arms read as mirror images at t=" + seconds + ": sum=" + sumOfPitches);
         }
+    }
+
+    /**
+     * DESIGN.md §7 P5 hand-test fix, the regression test for HATA1 in
+     * {@code inScreen()}: the holding (left) arm's roll is dominated by the
+     * static {@code SCREEN_HOLD_ROLL} term (the wobble riding on top of it is
+     * small by comparison), so it must be positive -- tucked inward -- at
+     * every instant. The working (right) arm's roll also has a static inward
+     * (negative) base, but the reach envelope riding on top of it is large
+     * enough to cross zero on individual samples, so this checks the sign
+     * that must dominate over a long window instead: negative samples must
+     * outnumber non-negative ones. A HATA1-style regression (both arms given
+     * the same sign) would flip both of these checks.
+     */
+    @Test
+    void inScreenArmsTuckInwardHoldRollPositiveWorkRollLeansNegative() {
+        UUID id = UUID.randomUUID();
+        PlayerCue cue = cue(id, Activity.IN_SCREEN, 0, 0);
+
+        int workNegative = 0;
+        int workTotal = 0;
+        for (float seconds = 0f; seconds <= 60f; seconds += 0.1f) {
+            PoseFrame frame = PoseAnimator.frameFor(cue, seconds * TICKS_PER_SECOND, 1f);
+            assertTrue(frame.leftArm().roll() > 0f,
+                    "expected the holding (left) arm's roll > 0 (tucked in) at t=" + seconds
+                            + ", was " + frame.leftArm().roll());
+            if (frame.rightArm().roll() < 0f) {
+                workNegative++;
+            }
+            workTotal++;
+        }
+
+        assertTrue(workNegative > workTotal / 2,
+                "expected the working (right) arm's roll to be negative (tucked in) on a majority of samples: "
+                        + workNegative + "/" + workTotal);
     }
 
     /**

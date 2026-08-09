@@ -36,8 +36,19 @@ public final class FakeChatStream {
     /** Lines shown on the panel: one in progress at the bottom, the rest already "sent" above it. */
     public static final int VISIBLE_LINES = 4;
 
-    /** Longest a line gets before it is treated as sent and a new one starts. */
-    public static final int MAX_LINE_LENGTH = 22;
+    /**
+     * Longest a line gets before it is treated as sent and a new one starts.
+     * DESIGN.md §7 P5 hand-test fix: cut down from 22, in step with the held
+     * chat panel shrinking from 1.1 to 0.62 blocks wide ({@code
+     * CueScreenPanelRenderer.CHAT_WIDTH_BLOCKS}) — a line this long is what
+     * lets {@code CueScreenPanelRenderer.drawChatText}'s height-derived scale
+     * stay the one usually in effect (see that method's own Javadoc on why it
+     * measures the real text instead of a fixed worst-case budget): a
+     * comfortably-sized full-length line already fits the panel's width, so
+     * the width constraint only ever binds — and only ever visibly changes the
+     * scale — on an unusually wide line, not on every keystroke.
+     */
+    public static final int MAX_LINE_LENGTH = 13;
 
     private static final char[] ALPHABET = "abcdefghijklmnopqrstuvwxyz     ".toCharArray();
 

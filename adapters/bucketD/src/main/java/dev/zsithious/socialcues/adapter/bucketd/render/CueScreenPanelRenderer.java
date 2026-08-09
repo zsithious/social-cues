@@ -180,15 +180,28 @@ public final class CueScreenPanelRenderer {
     // chosen to fit the task brief's "roughly 1.0-1.2 blocks wide" and
     // tuned by eye in-game, same as everywhere else in this codebase.
 
-    /** Blocks in front of the entity origin the panel's center sits, along body yaw — roughly a forearm's length. */
-    private static final float PANEL_FORWARD_OFFSET = 0.34f;
+    /**
+     * Blocks in front of the entity origin the panel's center sits, along body
+     * yaw. DESIGN.md §7 P5 hand-test fix: the typing pose's hand sits roughly
+     * 0.65 blocks forward at this pitch (see {@code
+     * PoseAnimator.TYPING_ARM_PITCH}'s own Javadoc) — the panel used to sit
+     * well short of that (0.34), which is why hands appeared to poke through
+     * it; now it sits just behind the fingers instead.
+     */
+    private static final float PANEL_FORWARD_OFFSET = 0.58f;
 
-    /** Container-GUI panel width; height is derived from the texture's own aspect ratio (see {@link #drawContainerPanel}). */
-    private static final float CONTAINER_WIDTH_BLOCKS = 1.1f;
+    /**
+     * Container-GUI panel width; height is derived from the texture's own
+     * aspect ratio (see {@link #drawContainerPanel}). DESIGN.md §7 P5
+     * hand-test fix: 1.1 blocks was wider than the player model itself (0.6
+     * blocks) and, at generic_54's aspect ratio, 1.39 blocks tall — a slab
+     * that cut across the whole body. Sized to read as a held tablet instead.
+     */
+    private static final float CONTAINER_WIDTH_BLOCKS = 0.58f;
 
     /** Chat-window panel size — independent of the container panel's aspect ratio, matches vanilla's own wide-short chat box shape. */
-    private static final float CHAT_WIDTH_BLOCKS = 1.1f;
-    private static final float CHAT_HEIGHT_BLOCKS = 0.55f;
+    private static final float CHAT_WIDTH_BLOCKS = 0.62f;
+    private static final float CHAT_HEIGHT_BLOCKS = 0.34f;
     private static final float CHAT_TEXT_MARGIN_BLOCKS = 0.045f;
 
     /** Nudges the text just off the background quad's own plane so the two never z-fight. */
@@ -302,19 +315,54 @@ public final class CueScreenPanelRenderer {
         matrices.pop();
     }
 
+    /**
+     * DESIGN.md §7 P5 hand-test follow-up: {@link ScreenPanelTextures.Texture}
+     * can carry more than one {@link ScreenPanelTextures.Band} now (see that
+     * class's own Javadoc on why: {@code CONTAINER_SMALL} reproduces
+     * vanilla's real two-blit single-chest composite rather than a truncated
+     * single crop). One quad is emitted per band, stacked vertically from the
+     * panel's top edge down, each sized proportionally to its own share of
+     * {@link ScreenPanelTextures.Texture#regionHeight()} — for the common
+     * single-band case this is exactly the one quad this method always drew.
+     */
     private static void drawContainerPanel(MatrixStack matrices, OrderedRenderCommandQueue queue,
             PlayerEntityRenderState state, PlayerCue cue, float alpha) {
         ScreenPanelTextures.Texture texture = ScreenPanelTextures.forScreenKind(cue.screen());
         Identifier textureId = Identifier.of("minecraft", texture.path());
 
+        int regionWidth = texture.regionWidth();
+        int regionHeight = texture.regionHeight();
         float halfWidth = CONTAINER_WIDTH_BLOCKS / 2f;
-        float halfHeight = halfWidth * texture.regionHeight() / texture.regionWidth();
-        float maxU = (float) texture.regionWidth() / texture.canvasWidth();
-        float maxV = (float) texture.regionHeight() / texture.canvasHeight();
+        float panelHeight = CONTAINER_WIDTH_BLOCKS * regionHeight / regionWidth;
+        float halfHeight = panelHeight / 2f;
         int alphaByte = Math.round(alpha * 255f);
 
-        queue.submitCustom(matrices, RenderLayers.entityTranslucent(textureId), (entry, vertices) ->
-                emitQuad(entry, vertices, halfWidth, halfHeight, 0f, maxU, 0f, maxV, state.light, 255, 255, 255, alphaByte));
+        // Every edge y-coordinate is derived from one running pixel offset
+        // (cumulativePx), not by repeatedly adding each band's own
+        // already-rounded-to-blocks height -- that is what keeps adjacent
+        // bands meeting exactly, with no visible seam or overlap between them.
+        int cumulativePx = 0;
+        for (ScreenPanelTextures.Band band : texture.bands()) {
+            float top = halfHeight - panelHeight * cumulativePx / regionHeight;
+            cumulativePx += band.height();
+            float bottom = halfHeight - panelHeight * cumulativePx / regionHeight;
+
+            // A band narrower than the texture's widest is centred under it
+            // (no texture shipped by this table needs that yet, but the rule
+            // stays consistent for whichever one eventually does).
+            float bandHalfWidth = halfWidth * band.width() / regionWidth;
+            float left = -bandHalfWidth;
+            float right = bandHalfWidth;
+
+            float minU = (float) band.u() / texture.canvasWidth();
+            float maxU = (float) (band.u() + band.width()) / texture.canvasWidth();
+            float minV = (float) band.v() / texture.canvasHeight();
+            float maxV = (float) (band.v() + band.height()) / texture.canvasHeight();
+
+            queue.submitCustom(matrices, RenderLayers.entityTranslucent(textureId), (entry, vertices) ->
+                    emitQuad(entry, vertices, left, right, top, bottom, minU, maxU, minV, maxV,
+                            state.light, 255, 255, 255, alphaByte));
+        }
     }
 
     private static void drawChatPanel(MatrixStack matrices, OrderedRenderCommandQueue queue,
@@ -326,7 +374,7 @@ public final class CueScreenPanelRenderer {
         // No container texture (task requirement) -- a flat, semi-transparent
         // quad sampling our own solid-white fill, tinted dark by vertex colour.
         queue.submitCustom(matrices, RenderLayers.entityTranslucent(PANEL_FILL_TEXTURE), (entry, vertices) ->
-                emitQuad(entry, vertices, halfWidth, halfHeight, 0f, 1f, 0f, 1f, state.light,
+                emitQuad(entry, vertices, -halfWidth, halfWidth, halfHeight, -halfHeight, 0f, 1f, 0f, 1f, state.light,
                         CHAT_BG_R, CHAT_BG_G, CHAT_BG_B, bgAlphaByte));
 
         drawChatText(matrices, queue, state, cue, alpha);
@@ -348,17 +396,48 @@ public final class CueScreenPanelRenderer {
         // FakeChatStream's simulated content (whose alphabet is deliberately
         // letters-and-spaces-only, see that class's Javadoc) -- appended to the
         // in-progress line ourselves, at the position FakeChatStream reports.
+        // Built once into displayLines so both the width measurement below and
+        // the actual draw loop see the exact same (caret-included) strings.
         int lastIndex = lines.size() - 1;
-        String lastLine = lines.get(lastIndex);
-        String displayLastLine = lastLine;
+        String[] displayLines = lines.toArray(new String[0]);
         if (blinkOn(seconds)) {
+            String lastLine = displayLines[lastIndex];
             int column = Math.min(caretColumn, lastLine.length());
-            displayLastLine = lastLine.substring(0, column) + CARET_GLYPH;
+            displayLines[lastIndex] = lastLine.substring(0, column) + CARET_GLYPH;
         }
 
         int lineHeightPx = textRenderer.fontHeight + LINE_GAP_PX;
         float usableHeight = CHAT_HEIGHT_BLOCKS - 2f * CHAT_TEXT_MARGIN_BLOCKS;
-        float scale = usableHeight / (FakeChatStream.VISIBLE_LINES * lineHeightPx);
+        float heightScale = usableHeight / (FakeChatStream.VISIBLE_LINES * lineHeightPx);
+
+        // DESIGN.md §7 P5 hand-test fix: the scale used to be derived purely from
+        // line count/font height, so nothing ever stopped a wide line's pixels
+        // from running past the panel's edge. Also constrain by width: the widest
+        // of the currently visible lines (caret included) must fit CHAT_WIDTH_BLOCKS
+        // minus its own margins, so the smaller of the two candidate scales wins.
+        //
+        // Why measured-per-frame rather than a fixed character-count budget: a
+        // fixed budget (e.g. textRenderer.getWidth of the alphabet's single
+        // widest glyph, repeated MAX_LINE_LENGTH times) would never need to
+        // change frame to frame, which is maximally stable, but it is a
+        // worst-case bound -- ordinary gibberish (a mix of narrow and wide
+        // lowercase letters) is usually well under it, so text would render
+        // smaller than the panel actually allows almost all the time. This
+        // renderer measures the real, currently-visible lines instead and pairs
+        // it with FakeChatStream.MAX_LINE_LENGTH being cut down (see that
+        // class's Javadoc) so a full-length line already fits comfortably under
+        // heightScale in the common case -- widthScale only ever binds, and the
+        // scale only ever visibly moves, on the rare line that leans unusually
+        // wide, not on every keystroke.
+        float maxLineWidthPx = 0f;
+        for (String line : displayLines) {
+            if (!line.isEmpty()) {
+                maxLineWidthPx = Math.max(maxLineWidthPx, textRenderer.getWidth(line));
+            }
+        }
+        float usableWidth = CHAT_WIDTH_BLOCKS - 2f * CHAT_TEXT_MARGIN_BLOCKS;
+        float widthScale = maxLineWidthPx <= 0f ? heightScale : usableWidth / maxLineWidthPx;
+        float scale = Math.min(heightScale, widthScale);
         // Text alpha follows the same panel fade as the background quad; submitText's
         // colour int is assumed to honour its alpha byte the way vanilla's own chat
         // HUD/actionbar fade does -- not independently javap-traced all the way into
@@ -375,8 +454,8 @@ public final class CueScreenPanelRenderer {
                 CHAT_HEIGHT_BLOCKS / 2f - CHAT_TEXT_MARGIN_BLOCKS, TEXT_FORWARD_EPSILON);
         matrices.scale(scale, -scale, scale);
 
-        for (int i = 0; i < lines.size(); i++) {
-            String line = i == lastIndex ? displayLastLine : lines.get(i);
+        for (int i = 0; i < displayLines.length; i++) {
+            String line = displayLines[i];
             if (line.isEmpty()) {
                 continue;
             }
@@ -395,25 +474,56 @@ public final class CueScreenPanelRenderer {
      * CueBillboardRenderer.emitQuad}'s exact winding convention, which is
      * what keeps this quad visible under normal backface culling. Here local
      * {@code +Z} is the panel's outward normal (see class Javadoc), so the
-     * panel is visible from in front of the player and (by design, matching
-     * a real held object) not from behind.
+     * front face is visible from in front of the player.
+     *
+     * <p><b>DESIGN.md §7 P5 hand-test fix — a second, back-facing quad.</b>
+     * The hand-test screenshot showed the panel reading as nearly solid black
+     * when seen from the wearer's own side (e.g. third person, looking past
+     * your own shoulder): a single-sided quad's {@code normal(entry, 0, 0,
+     * 1)} only matches the diffuse lighting model from the front, so from
+     * behind the same normal points *away* from the viewer and the surface
+     * shades as if it were facing away from every light. Real held objects
+     * (and vanilla's own two-sided GUI-container quads) do not go dark from
+     * the back, so this emits a second quad with reversed winding (correct
+     * for backface culling when viewed from {@code -Z}) and {@code normal(entry,
+     * 0, 0, -1)}, sharing the same texture/colour/alpha. The texture is not
+     * mirrored front-to-back (same as the text on it not being mirrored
+     * either) — a minor, accepted imperfection for a decorative cue panel,
+     * not a readable-from-behind requirement.
      */
-    private static void emitQuad(MatrixStack.Entry entry, VertexConsumer vertices, float halfWidth, float halfHeight,
+    /**
+     * DESIGN.md §7 P5 hand-test follow-up: takes explicit {@code left}/
+     * {@code right}/{@code top}/{@code bottom} edges rather than a half-width/
+     * half-height centred on the local origin, so {@link #drawContainerPanel}
+     * can stack several of these (one per {@link ScreenPanelTextures.Band})
+     * at different vertical offsets on the same panel; a quad centred at
+     * {@code (0,0)} — every other caller — is just {@code left=-halfWidth,
+     * right=halfWidth, top=halfHeight, bottom=-halfHeight}.
+     */
+    private static void emitQuad(MatrixStack.Entry entry, VertexConsumer vertices,
+            float left, float right, float top, float bottom,
             float minU, float maxU, float minV, float maxV, int light, int r, int g, int b, int alpha) {
-        vertex(entry, vertices, -halfWidth, halfHeight, minU, minV, light, r, g, b, alpha); // top-left
-        vertex(entry, vertices, -halfWidth, -halfHeight, minU, maxV, light, r, g, b, alpha); // bottom-left
-        vertex(entry, vertices, halfWidth, -halfHeight, maxU, maxV, light, r, g, b, alpha); // bottom-right
-        vertex(entry, vertices, halfWidth, halfHeight, maxU, minV, light, r, g, b, alpha); // top-right
+        // Front face.
+        vertex(entry, vertices, left, top, minU, minV, light, r, g, b, alpha, 0f, 0f, 1f); // top-left
+        vertex(entry, vertices, left, bottom, minU, maxV, light, r, g, b, alpha, 0f, 0f, 1f); // bottom-left
+        vertex(entry, vertices, right, bottom, maxU, maxV, light, r, g, b, alpha, 0f, 0f, 1f); // bottom-right
+        vertex(entry, vertices, right, top, maxU, minV, light, r, g, b, alpha, 0f, 0f, 1f); // top-right
+
+        // Back face: same corners, reversed winding, opposite normal.
+        vertex(entry, vertices, right, top, maxU, minV, light, r, g, b, alpha, 0f, 0f, -1f); // top-right
+        vertex(entry, vertices, right, bottom, maxU, maxV, light, r, g, b, alpha, 0f, 0f, -1f); // bottom-right
+        vertex(entry, vertices, left, bottom, minU, maxV, light, r, g, b, alpha, 0f, 0f, -1f); // bottom-left
+        vertex(entry, vertices, left, top, minU, minV, light, r, g, b, alpha, 0f, 0f, -1f); // top-left
     }
 
     private static void vertex(MatrixStack.Entry entry, VertexConsumer vertices, float x, float y,
-            float u, float v, int light, int r, int g, int b, int alpha) {
+            float u, float v, int light, int r, int g, int b, int alpha, float nx, float ny, float nz) {
         vertices.vertex(entry.getPositionMatrix(), x, y, 0f)
                 .color(r, g, b, alpha)
                 .texture(u, v)
                 .overlay(OverlayTexture.DEFAULT_UV)
                 .light(light)
-                .normal(entry, 0f, 0f, 1f);
+                .normal(entry, nx, ny, nz);
     }
 
     private static float clamp01(float value) {

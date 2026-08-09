@@ -20,16 +20,19 @@ class ScreenKindMapperTest {
 
     @ParameterizedTest
     @CsvSource({
-            "minecraft:generic_9x1, CONTAINER",
-            "minecraft:generic_9x2, CONTAINER",
-            "minecraft:generic_9x3, CONTAINER",
+            // DESIGN.md §7 P5 hand-test fix (HATA7): 9x1..9x3 are now the
+            // dedicated "small container" kind, not lumped in with the double
+            // chest -- see ScreenKindMapper's own comment on this table.
+            "minecraft:generic_9x1, CONTAINER_SMALL",
+            "minecraft:generic_9x2, CONTAINER_SMALL",
+            "minecraft:generic_9x3, CONTAINER_SMALL",
             "minecraft:generic_9x4, CONTAINER",
             "minecraft:generic_9x5, CONTAINER",
             "minecraft:generic_9x6, CONTAINER",
-            "minecraft:generic_3x3, CONTAINER",
-            "minecraft:crafter_3x3, CONTAINER",
-            "minecraft:hopper, CONTAINER",
-            "minecraft:shulker_box, CONTAINER",
+            "minecraft:generic_3x3, DISPENSER",
+            "minecraft:crafter_3x3, DISPENSER",
+            "minecraft:hopper, HOPPER",
+            "minecraft:shulker_box, SHULKER",
             "minecraft:grindstone, CONTAINER",
             "minecraft:crafting, CRAFTING",
             "minecraft:furnace, FURNACE",

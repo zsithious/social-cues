@@ -127,13 +127,19 @@ class FakeChatStreamTest {
      * DESIGN.md §7 P5b: "higher intensity produces characters faster". Sampled
      * at a fixed instant early enough that neither cadence has wrapped to a
      * second line yet, so caretColumn directly reflects total characters typed.
+     *
+     * <p>DESIGN.md §7 P5 hand-test fix: {@code MAX_LINE_LENGTH} was cut down
+     * (see that constant's own Javadoc) to fit the narrower held chat panel,
+     * so the fastest cadence now wraps a line in under two seconds -- the
+     * sample instant moved earlier to stay inside the pre-wrap window for
+     * both cadences.
      */
     @Test
     void higherIntensityProducesCharactersFaster() {
         UUID id = UUID.randomUUID();
         PlayerCue slow = cue(id, 0);
         PlayerCue fast = cue(id, 255);
-        float seconds = 2f;
+        float seconds = 1.5f;
 
         int slowColumn = FakeChatStream.caretColumn(slow, seconds);
         int fastColumn = FakeChatStream.caretColumn(fast, seconds);

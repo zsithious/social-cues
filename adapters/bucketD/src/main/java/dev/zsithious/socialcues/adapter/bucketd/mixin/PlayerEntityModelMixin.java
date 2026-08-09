@@ -153,6 +153,19 @@ public class PlayerEntityModelMixin {
         PlayerEntityModel self = (PlayerEntityModel) (Object) this;
         socialcues$add(self.rightArm, frame.rightArm());
         socialcues$add(self.leftArm, frame.leftArm());
+
+        // DESIGN.md §7 P5 hand-test fix ("animasyon başlar başlamaz head oraya
+        // dönük görünsün dışarıdan"): headAim, when present, blends the head
+        // to an *absolute* target FIRST -- see PoseFrame's own Javadoc for why
+        // this has to be a blend-to-target rather than another additive offset
+        // (an offset can only ever nudge whatever angle the head already had,
+        // which is exactly what let the head keep facing a stale direction
+        // through an entire pose). The small additive nod/sway in frame.head()
+        // is then layered on top of that, unchanged from before.
+        if (frame.headAim() > 0f) {
+            self.head.pitch = socialcues$lerp(self.head.pitch, frame.headAimPitch(), frame.headAim());
+            self.head.yaw = socialcues$lerp(self.head.yaw, frame.headAimYaw(), frame.headAim());
+        }
         socialcues$add(self.head, frame.head());
         socialcues$add(self.body, frame.body());
     }
@@ -161,5 +174,9 @@ public class PlayerEntityModelMixin {
         part.pitch += limb.pitch();
         part.yaw += limb.yaw();
         part.roll += limb.roll();
+    }
+
+    private static float socialcues$lerp(float from, float to, float t) {
+        return from + (to - from) * t;
     }
 }
