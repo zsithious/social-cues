@@ -23,5 +23,8 @@
     "minecraft": "${mc_version_range}",
     "java": ">=21",
     "fabric-api": "*"
+  },
+  "suggests": {
+    "modmenu": "*"
   }
 }

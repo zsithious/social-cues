@@ -22,6 +22,21 @@ val row = versionRows.first { it["mc"] == mcVersion }
 
 val yarnMappings = row["yarn"] as String
 val fabricApiVersion = row["fabricApi"] as String
+
+// P6 (config UI) deps. Absent on a row = "this Minecraft version has no
+// config-UI dependency pinned yet", which is currently every row except
+// 1.21.11 — DESIGN.md §14's order is deliberate: 1.21.11 goes end-to-end
+// first (P0–P6), the other eleven rows follow in P7. Absent is silence, not
+// a default: guessing a ModMenu/Cloth version for a row nobody has built
+// against would produce a build that resolves and then fails in ways that
+// look like our bug. When P7 fills these in, note that neither project's
+// version number tracks Minecraft's in a form you can compute — ModMenu
+// 17.0.0 is 1.21.11's, while its Maven "latest" was 20.0.1 at the time of
+// writing (a newer Minecraft's) — so every row must be looked up against
+// the Modrinth API's game_versions filter, exactly like the fabricApi
+// column already was.
+val modMenuVersion = row["modMenu"] as String?
+val clothConfigVersion = row["clothConfig"] as String?
 val loomVersionForRow = row["loom"] as String
 val bucket = row["bucket"] as String
 val loaderVersion = providers.gradleProperty("loader_version").get()
@@ -43,6 +58,21 @@ base {
 
 repositories {
     mavenCentral()
+    // P6 config UI. Neither library is on Maven Central; both publish only to
+    // their own maven. Scoped with content filters so a typo in any *other*
+    // coordinate cannot silently start resolving from a third-party host —
+    // these two repos are trusted for exactly two groups and nothing else.
+    maven("https://maven.terraformersmc.com/releases/") {
+        name = "TerraformersMC"
+        content { includeGroup("com.terraformersmc") }
+    }
+    maven("https://maven.shedaniel.me/") {
+        name = "Shedaniel"
+        content {
+            includeGroup("me.shedaniel.cloth")
+            includeGroup("me.shedaniel.cloth.api")
+        }
+    }
 }
 
 dependencies {
@@ -53,6 +83,33 @@ dependencies {
 
     implementation(project(":core"))
     include(project(":core"))
+
+    // ModMenu is a SOFT dependency: compile-only, so the mod can implement
+    // ModMenuApi without ever requiring ModMenu to be installed (the
+    // entrypoint is simply never called when it is absent — that is how
+    // Fabric entrypoints work, an absent entrypoint owner is not an error).
+    // modLocalRuntime puts it in the dev runs anyway, because a config-screen
+    // hook you cannot click during a hand test is a hook you cannot verify.
+    // Never `include` it: bundling a mod-list UI into a cue mod would be
+    // hostile, and the user may deliberately not want it.
+    if (modMenuVersion != null) {
+        modCompileOnly("com.terraformersmc:modmenu:$modMenuVersion")
+        modLocalRuntime("com.terraformersmc:modmenu:$modMenuVersion")
+    }
+
+    // Cloth Config is a HARD dependency of the config screen, so it is a real
+    // implementation dependency, and `include`d (jar-in-jar) so an end user
+    // needs nothing beyond Fabric API. Cloth supports and documents JiJ, and
+    // the loader de-duplicates nested copies by version, so a user who
+    // already has it standalone keeps whichever is newer.
+    //
+    // `transitive = false` on both: Cloth's POM drags in its own Fabric API
+    // and Minecraft coordinates, which would fight the versions this row
+    // already pinned above. We want the library, not its idea of the platform.
+    if (clothConfigVersion != null) {
+        modImplementation("me.shedaniel.cloth:cloth-config-fabric:$clothConfigVersion") { isTransitive = false }
+        include("me.shedaniel.cloth:cloth-config-fabric:$clothConfigVersion") { isTransitive = false }
+    }
 }
 
 loom {

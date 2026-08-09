@@ -15,6 +15,7 @@
     { "mc": "1.21.8",  "yarn": "1.21.8+build.1",   "fabricApi": "0.136.1+1.21.8",  "bucket": "C", "loom": "1.17.17" },
     { "mc": "1.21.9",  "yarn": "1.21.9+build.1",   "fabricApi": "0.134.1+1.21.9",  "bucket": "D", "loom": "1.17.17" },
     { "mc": "1.21.10", "yarn": "1.21.10+build.3",  "fabricApi": "0.138.4+1.21.10", "bucket": "D", "loom": "1.17.17" },
-    { "mc": "1.21.11", "yarn": "1.21.11+build.6",  "fabricApi": "0.141.6+1.21.11", "bucket": "D", "loom": "1.17.17" }
+    { "mc": "1.21.11", "yarn": "1.21.11+build.6",  "fabricApi": "0.141.6+1.21.11", "bucket": "D", "loom": "1.17.17",
+      "modMenu": "17.0.0", "clothConfig": "21.11.153" }
   ]
 }
