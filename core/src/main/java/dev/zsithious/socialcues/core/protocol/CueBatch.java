@@ -10,9 +10,18 @@ import dev.zsithious.socialcues.core.state.ScreenKind;
 
 /**
  * DESIGN.md §5 — S2C 0x82:
- * `varint count, count ×{ uuid, byte activity, byte screenKind, byte intensity, byte flags }`.
+ * `byte tier, varint count, count ×{ uuid, byte activity, byte screenKind, byte intensity, byte flags }`.
+ *
+ * <p><b>{@code tier} tells the receiving client which of DESIGN.md §5's two
+ * broadcast tiers ({@link CueTier#NEAR}/{@link CueTier#GLOBAL}) these entries
+ * came from.</b> It is written first, before the entry count, and is not
+ * optional — see {@link CueTier}'s own Javadoc for why: without it, a coarse
+ * global-tier batch and a detailed near-tier batch were indistinguishable on
+ * the wire, and whichever arrived last silently won in {@code
+ * core.client.RemoteCueStore}'s (former) single shared map. That was a real,
+ * hand-tested bug, not a hypothetical one.
  */
-public record CueBatch(List<Entry> entries) implements S2CMessage {
+public record CueBatch(CueTier tier, List<Entry> entries) implements S2CMessage {
 
     public static final int TYPE_ID = 0x82;
 
@@ -20,6 +29,7 @@ public record CueBatch(List<Entry> entries) implements S2CMessage {
     private static final int ENTRY_WIRE_SIZE = 20;
 
     public CueBatch {
+        Objects.requireNonNull(tier, "tier");
         Objects.requireNonNull(entries, "entries");
         entries = List.copyOf(entries);
     }
@@ -31,6 +41,7 @@ public record CueBatch(List<Entry> entries) implements S2CMessage {
 
     @Override
     public void encode(ByteWriter writer) {
+        writer.writeByte(EnumCodec.toWire(tier));
         writer.writeVarInt(entries.size());
         for (Entry entry : entries) {
             writer.writeUuid(entry.id());
@@ -42,6 +53,7 @@ public record CueBatch(List<Entry> entries) implements S2CMessage {
     }
 
     public static CueBatch decode(ByteReader reader) {
+        CueTier tier = EnumCodec.cueTierFromWire(reader.readUnsignedByte());
         int count = reader.readVarInt();
         if (count < 0) {
             throw new ProtocolDecodeException("Negative CueBatch entry count: " + count);
@@ -64,7 +76,7 @@ public record CueBatch(List<Entry> entries) implements S2CMessage {
             int flags = reader.readUnsignedByte();
             entries.add(new Entry(id, activity, screenKind, intensity, flags));
         }
-        return new CueBatch(entries);
+        return new CueBatch(tier, entries);
     }
 
     /** One player's wire-shaped cue. Unlike {@code PlayerCue}, carries no local-only fields. */

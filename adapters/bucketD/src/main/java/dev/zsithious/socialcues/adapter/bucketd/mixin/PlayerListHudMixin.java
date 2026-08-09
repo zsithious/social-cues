@@ -97,7 +97,11 @@ public class PlayerListHudMixin {
             // javap -c-verified (1.21.11): com.mojang.authlib.GameProfile exposes
             // id()/name(), not the older getId()/getName() (authlib went record-style).
             UUID id = entry.getProfile().id();
-            Optional<PlayerCue> cueOpt = RemoteCueStoreHolder.get().cueOf(id);
+            // Katman 2 (tab list): near tier if we have it, else the coarse
+            // global tier — see RemoteCueStore.tabCueOf's own Javadoc for why
+            // this is deliberately not cueOf (that one is world-render-only,
+            // near tier exclusively, DESIGN.md §5's P5 hand-test bugfix).
+            Optional<PlayerCue> cueOpt = RemoteCueStoreHolder.get().tabCueOf(id);
             if (cueOpt.isEmpty()) {
                 return;
             }

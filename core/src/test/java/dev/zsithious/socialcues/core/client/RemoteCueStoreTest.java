@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 
 import dev.zsithious.socialcues.core.protocol.CueBatch;
 import dev.zsithious.socialcues.core.protocol.CueDrop;
+import dev.zsithious.socialcues.core.protocol.CueTier;
 import dev.zsithious.socialcues.core.state.Activity;
 import dev.zsithious.socialcues.core.state.CueFlags;
 import dev.zsithious.socialcues.core.state.PlayerCue;
@@ -28,12 +29,26 @@ class RemoteCueStoreTest {
     private static final UUID ALICE = new UUID(0L, 1L);
     private static final UUID BOB = new UUID(0L, 2L);
 
+    /**
+     * The near tier is this file's default, since it is the one {@link
+     * RemoteCueStore#cueOf} reads and therefore what almost every test below
+     * asserts against; the tier-specific tests build their batches with
+     * {@link #tierBatchOf} explicitly.
+     */
     private static CueBatch batchOf(CueBatch.Entry... entries) {
-        return new CueBatch(List.of(entries));
+        return tierBatchOf(CueTier.NEAR, entries);
+    }
+
+    private static CueBatch tierBatchOf(CueTier tier, CueBatch.Entry... entries) {
+        return new CueBatch(tier, List.of(entries));
     }
 
     private static CueBatch.Entry entry(UUID id, Activity activity, int intensity, int flags) {
         return new CueBatch.Entry(id, activity, ScreenKind.UNKNOWN, intensity, flags);
+    }
+
+    private static CueBatch.Entry screenEntry(UUID id, ScreenKind screen) {
+        return new CueBatch.Entry(id, Activity.IN_SCREEN, screen, 0, 0);
     }
 
     @Test
@@ -210,6 +225,117 @@ class RemoteCueStoreTest {
     void nullIdLookupsAreRejected() {
         RemoteCueStore store = new RemoteCueStore();
         assertThrows(NullPointerException.class, () -> store.cueOf(null));
+        assertThrows(NullPointerException.class, () -> store.tabCueOf(null));
         assertThrows(NullPointerException.class, () -> store.isKnown(null));
+    }
+
+    // --- Tier separation (DESIGN.md §5 / §7, P5 hand-test bug 2026-08-09) ---
+    //
+    // The bug: one shared map, plain put(), so whichever tier's batch landed
+    // last won. The global tier's entries are ScreenKind.UNKNOWN by design
+    // (EffectivePolicy.applyGlobalCoarse), so its ~1/s broadcast would wipe a
+    // detailed near entry and the held panel would revert to the fallback
+    // texture about a second after showing the right GUI. These tests pin the
+    // fix from both directions, since the ordering was the whole bug.
+
+    @Test
+    void coarseGlobalEntryDoesNotOverwriteDetailedNearEntry() {
+        RemoteCueStore store = new RemoteCueStore();
+        store.applyBatch(tierBatchOf(CueTier.NEAR, screenEntry(ALICE, ScreenKind.FURNACE)), 1_000L);
+
+        // Exactly what the relay's global tier sends a second later.
+        store.applyBatch(tierBatchOf(CueTier.GLOBAL, screenEntry(ALICE, ScreenKind.UNKNOWN)), 2_000L);
+
+        PlayerCue cue = store.cueOf(ALICE).orElseThrow();
+        assertEquals(ScreenKind.FURNACE, cue.screen());
+        assertEquals(1_000L, cue.lastChangeMs());
+    }
+
+    @Test
+    void detailedNearEntryIsVisibleEvenWhenTheGlobalEntryArrivedFirst() {
+        RemoteCueStore store = new RemoteCueStore();
+        store.applyBatch(tierBatchOf(CueTier.GLOBAL, screenEntry(ALICE, ScreenKind.UNKNOWN)), 1_000L);
+        store.applyBatch(tierBatchOf(CueTier.NEAR, screenEntry(ALICE, ScreenKind.FURNACE)), 2_000L);
+
+        assertEquals(ScreenKind.FURNACE, store.cueOf(ALICE).orElseThrow().screen());
+    }
+
+    @Test
+    void cueOfIgnoresAGlobalOnlyPlayerEntirely() {
+        RemoteCueStore store = new RemoteCueStore();
+        store.applyBatch(tierBatchOf(CueTier.GLOBAL, entry(ALICE, Activity.TYPING_CHAT, 0, 0)), 0L);
+
+        // Known (the tab list can show them) but not drawable in the world:
+        // there is no near-tier detail to draw.
+        assertTrue(store.isKnown(ALICE));
+        assertTrue(store.cueOf(ALICE).isEmpty());
+        assertEquals(Set.of(ALICE), store.knownPlayers());
+    }
+
+    @Test
+    void tabCueOfPrefersTheNearTierAndFallsBackToGlobal() {
+        RemoteCueStore store = new RemoteCueStore();
+        store.applyBatch(tierBatchOf(CueTier.NEAR, screenEntry(ALICE, ScreenKind.FURNACE)), 0L);
+        store.applyBatch(tierBatchOf(CueTier.GLOBAL, screenEntry(ALICE, ScreenKind.UNKNOWN)), 0L);
+        store.applyBatch(tierBatchOf(CueTier.GLOBAL, entry(BOB, Activity.AFK, 0, 0)), 0L);
+
+        assertEquals(ScreenKind.FURNACE, store.tabCueOf(ALICE).orElseThrow().screen());
+        assertEquals(Activity.AFK, store.tabCueOf(BOB).orElseThrow().activity());
+    }
+
+    @Test
+    void tabCueOfIsEmptyForAnUnknownPlayer() {
+        RemoteCueStore store = new RemoteCueStore();
+        assertTrue(store.tabCueOf(ALICE).isEmpty());
+    }
+
+    @Test
+    void lastChangeMsIsTrackedPerTierNotGlobally() {
+        RemoteCueStore store = new RemoteCueStore();
+        store.applyBatch(tierBatchOf(CueTier.NEAR, entry(ALICE, Activity.AFK, 0, 0)), 1_000L);
+
+        // Same state, other tier: this is the global map's *first* sight of
+        // ALICE, so it stamps nowMs there — and must not disturb the near
+        // map's own earlier stamp.
+        store.applyBatch(tierBatchOf(CueTier.GLOBAL, entry(ALICE, Activity.AFK, 0, 0)), 9_000L);
+
+        assertEquals(1_000L, store.cueOf(ALICE).orElseThrow().lastChangeMs());
+        assertEquals(1_000L, store.tabCueOf(ALICE).orElseThrow().lastChangeMs());
+    }
+
+    @Test
+    void dropRemovesThePlayerFromBothTiers() {
+        RemoteCueStore store = new RemoteCueStore();
+        store.applyBatch(tierBatchOf(CueTier.NEAR, entry(ALICE, Activity.TYPING_CHAT, 0, 0)), 0L);
+        store.applyBatch(tierBatchOf(CueTier.GLOBAL, entry(ALICE, Activity.TYPING_CHAT, 0, 0)), 0L);
+
+        store.applyDrop(new CueDrop(List.of(ALICE)));
+
+        assertFalse(store.isKnown(ALICE));
+        assertTrue(store.cueOf(ALICE).isEmpty());
+        assertTrue(store.tabCueOf(ALICE).isEmpty());
+    }
+
+    @Test
+    void clearWipesBothTiers() {
+        RemoteCueStore store = new RemoteCueStore();
+        store.applyBatch(tierBatchOf(CueTier.NEAR, entry(ALICE, Activity.TYPING_CHAT, 0, 0)), 0L);
+        store.applyBatch(tierBatchOf(CueTier.GLOBAL, entry(BOB, Activity.AFK, 0, 0)), 0L);
+
+        store.clear();
+
+        assertTrue(store.knownPlayers().isEmpty());
+        assertTrue(store.tabCueOf(ALICE).isEmpty());
+        assertTrue(store.tabCueOf(BOB).isEmpty());
+    }
+
+    @Test
+    void knownPlayersUnionsBothTiersWithoutDuplicating() {
+        RemoteCueStore store = new RemoteCueStore();
+        store.applyBatch(tierBatchOf(CueTier.NEAR, entry(ALICE, Activity.NORMAL, 0, 0)), 0L);
+        store.applyBatch(tierBatchOf(CueTier.GLOBAL, entry(ALICE, Activity.NORMAL, 0, 0)), 0L);
+        store.applyBatch(tierBatchOf(CueTier.GLOBAL, entry(BOB, Activity.NORMAL, 0, 0)), 0L);
+
+        assertEquals(Set.of(ALICE, BOB), store.knownPlayers());
     }
 }

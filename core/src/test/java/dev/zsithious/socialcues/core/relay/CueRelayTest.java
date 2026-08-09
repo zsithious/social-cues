@@ -17,6 +17,7 @@ import dev.zsithious.socialcues.core.policy.PolicyBits;
 import dev.zsithious.socialcues.core.protocol.C2SMessages;
 import dev.zsithious.socialcues.core.protocol.ClientHello;
 import dev.zsithious.socialcues.core.protocol.CueBatch;
+import dev.zsithious.socialcues.core.protocol.CueTier;
 import dev.zsithious.socialcues.core.protocol.CueUpdate;
 import dev.zsithious.socialcues.core.protocol.ProtocolConstants;
 import dev.zsithious.socialcues.core.protocol.SharePrefs;
@@ -534,5 +535,35 @@ class CueRelayTest {
         TickResult result = relay.tick(0L);
 
         assertEquals(Activity.NORMAL, result.globalBatches().get(B).entries().get(0).activity());
+    }
+
+    /**
+     * DESIGN.md §5 (P5 hand-test bug, 2026-08-09): the relay labelling each
+     * batch is the server half of the tier fix. {@code
+     * core.client.RemoteCueStore} routes an incoming batch purely by {@link
+     * CueBatch#tier()}, so a near batch mislabelled {@code GLOBAL} — or the
+     * reverse — silently reintroduces exactly the coarse-overwrites-detailed
+     * bug the client's two maps exist to prevent, and nothing else on the
+     * wire would catch it. The near entry deliberately carries a real
+     * {@link ScreenKind} so the two batches differ in content as well as
+     * label, matching the situation the bug actually appeared in.
+     */
+    @Test
+    void eachTiersBatchesAreLabelledWithTheirOwnTier() {
+        FakeVisibility vis = new FakeVisibility();
+        placeTogether(vis, A, B);
+        CueRelay relay = relay(vis);
+        relay.join(A, 0L);
+        relay.join(B, 0L);
+        relay.ingest(A, cueUpdateBytes(Activity.IN_SCREEN, ScreenKind.FURNACE, 0, 0), 0L);
+
+        TickResult result = relay.tick(0L);
+
+        assertEquals(CueTier.NEAR, result.nearBatches().get(B).tier());
+        assertEquals(CueTier.GLOBAL, result.globalBatches().get(B).tier());
+        // The premise of the whole fix: same player, same tick, two different
+        // detail levels — FURNACE near, UNKNOWN global (applyGlobalCoarse).
+        assertEquals(ScreenKind.FURNACE, result.nearBatches().get(B).entries().get(0).screenKind());
+        assertEquals(ScreenKind.UNKNOWN, result.globalBatches().get(B).entries().get(0).screenKind());
     }
 }

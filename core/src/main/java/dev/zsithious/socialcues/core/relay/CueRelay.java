@@ -20,6 +20,7 @@ import dev.zsithious.socialcues.core.protocol.C2SMessages;
 import dev.zsithious.socialcues.core.protocol.ClientHello;
 import dev.zsithious.socialcues.core.protocol.CueBatch;
 import dev.zsithious.socialcues.core.protocol.CueDrop;
+import dev.zsithious.socialcues.core.protocol.CueTier;
 import dev.zsithious.socialcues.core.protocol.CueUpdate;
 import dev.zsithious.socialcues.core.protocol.ProtocolDecodeException;
 import dev.zsithious.socialcues.core.protocol.SharePrefs;
@@ -257,7 +258,7 @@ public final class CueRelay {
             if (nearEligible.isPresent()) {
                 TierUpdate update = computeTierUpdate(viewer, nearEligible.get(), lastSentNear);
                 if (!update.changed().isEmpty()) {
-                    nearBatches.put(viewer, new CueBatch(update.changed()));
+                    nearBatches.put(viewer, new CueBatch(CueTier.NEAR, update.changed()));
                 }
                 if (!update.dropped().isEmpty()) {
                     nearDrops.put(viewer, new CueDrop(update.dropped()));
@@ -267,7 +268,7 @@ public final class CueRelay {
             Map<UUID, CueBatch.Entry> globalEligible = eligibleGlobalTargets(viewer, nowMs);
             TierUpdate update = computeTierUpdate(viewer, globalEligible, lastSentGlobal);
             if (!update.changed().isEmpty()) {
-                globalBatches.put(viewer, new CueBatch(update.changed()));
+                globalBatches.put(viewer, new CueBatch(CueTier.GLOBAL, update.changed()));
             }
             if (!update.dropped().isEmpty()) {
                 globalDrops.put(viewer, new CueDrop(update.dropped()));

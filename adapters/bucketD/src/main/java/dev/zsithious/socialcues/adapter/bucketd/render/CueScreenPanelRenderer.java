@@ -199,6 +199,18 @@ public final class CueScreenPanelRenderer {
      */
     private static final float CONTAINER_WIDTH_BLOCKS = 0.58f;
 
+    /**
+     * Height of the neutral "we don't know what screen this is" panel drawn
+     * for {@link ScreenPanelTextures#forScreenKind}'s empty case (protocol-tier
+     * bugfix, 2026-08-09 — see that method's own Javadoc). There is no real
+     * GUI texture behind this panel to derive an aspect ratio from, so it is
+     * simply square on {@link #CONTAINER_WIDTH_BLOCKS} — close to the
+     * near-square 1.05:1 the old container-texture fallback happened to have,
+     * so the panel's on-screen footprint does not visibly jump when a screen
+     * crosses between "known" and "unknown".
+     */
+    private static final float NEUTRAL_PANEL_HEIGHT_BLOCKS = CONTAINER_WIDTH_BLOCKS;
+
     /** Chat-window panel size — independent of the container panel's aspect ratio, matches vanilla's own wide-short chat box shape. */
     private static final float CHAT_WIDTH_BLOCKS = 0.62f;
     private static final float CHAT_HEIGHT_BLOCKS = 0.34f;
@@ -324,10 +336,21 @@ public final class CueScreenPanelRenderer {
      * panel's top edge down, each sized proportionally to its own share of
      * {@link ScreenPanelTextures.Texture#regionHeight()} — for the common
      * single-band case this is exactly the one quad this method always drew.
+     *
+     * <p>{@link ScreenPanelTextures#forScreenKind} returning empty is not an
+     * error but a real answer — "this screen kind must not claim to be any
+     * specific container" (protocol-tier bugfix, 2026-08-09; see that
+     * method's own Javadoc) — and is drawn as {@link #drawNeutralPanel}'s
+     * flat fill instead.
      */
     private static void drawContainerPanel(MatrixStack matrices, OrderedRenderCommandQueue queue,
             PlayerEntityRenderState state, PlayerCue cue, float alpha) {
-        ScreenPanelTextures.Texture texture = ScreenPanelTextures.forScreenKind(cue.screen());
+        Optional<ScreenPanelTextures.Texture> textureOpt = ScreenPanelTextures.forScreenKind(cue.screen());
+        if (textureOpt.isEmpty()) {
+            drawNeutralPanel(matrices, queue, state, alpha);
+            return;
+        }
+        ScreenPanelTextures.Texture texture = textureOpt.get();
         Identifier textureId = Identifier.of("minecraft", texture.path());
 
         int regionWidth = texture.regionWidth();
@@ -363,6 +386,31 @@ public final class CueScreenPanelRenderer {
                     emitQuad(entry, vertices, left, right, top, bottom, minU, maxU, minV, maxV,
                             state.light, 255, 255, 255, alphaByte));
         }
+    }
+
+    /**
+     * The "a screen is open, but we are not saying which" panel: the same
+     * flat {@link #PANEL_FILL_TEXTURE} quad {@link #drawChatPanel} already
+     * draws as its background, in the same dark tint, just at this panel's
+     * own square size ({@link #NEUTRAL_PANEL_HEIGHT_BLOCKS}) and with no text
+     * over it. Drawn whenever {@link ScreenPanelTextures#forScreenKind} has
+     * no texture for the kind — {@code UNKNOWN} (which §9's {@code
+     * shareScreenDetail=false} produces on purpose for every {@code
+     * IN_SCREEN} player), {@code MODDED}, and the screen kinds with no
+     * container GUI at all. Deliberately shows *something*: the player really
+     * is in a screen, which is exactly the fact Katman 3 exists to convey;
+     * only the container identity is unknown, so the panel is present but
+     * blank rather than absent.
+     */
+    private static void drawNeutralPanel(MatrixStack matrices, OrderedRenderCommandQueue queue,
+            PlayerEntityRenderState state, float alpha) {
+        float halfWidth = CONTAINER_WIDTH_BLOCKS / 2f;
+        float halfHeight = NEUTRAL_PANEL_HEIGHT_BLOCKS / 2f;
+        int bgAlphaByte = Math.round(alpha * CHAT_BG_MAX_ALPHA * 255f);
+
+        queue.submitCustom(matrices, RenderLayers.entityTranslucent(PANEL_FILL_TEXTURE), (entry, vertices) ->
+                emitQuad(entry, vertices, -halfWidth, halfWidth, halfHeight, -halfHeight, 0f, 1f, 0f, 1f, state.light,
+                        CHAT_BG_R, CHAT_BG_G, CHAT_BG_B, bgAlphaByte));
     }
 
     private static void drawChatPanel(MatrixStack matrices, OrderedRenderCommandQueue queue,

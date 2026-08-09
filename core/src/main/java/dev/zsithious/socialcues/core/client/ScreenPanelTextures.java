@@ -2,6 +2,7 @@ package dev.zsithious.socialcues.core.client;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 import dev.zsithious.socialcues.core.state.Activity;
 import dev.zsithious.socialcues.core.state.ScreenKind;
@@ -208,6 +209,17 @@ public final class ScreenPanelTextures {
      * not a crop or an invention: every pixel comes from a real, measured
      * region of the one texture vanilla ships, arranged exactly the way
      * vanilla's own renderer already arranges them for a real single chest.
+     *
+     * <p><b>No longer the catch-all fallback (protocol-tier bugfix,
+     * 2026-08-09): see {@link #forScreenKind}'s own Javadoc.</b> This texture
+     * is still exactly what {@link ScreenKind#CONTAINER_SMALL} (a genuine
+     * single chest) draws; it is no longer what {@link ScreenKind#UNKNOWN}/
+     * {@link ScreenKind#MODDED} and the other unmapped kinds fall back to —
+     * those now render no container texture at all (a neutral flat panel,
+     * drawn by {@code adapters.bucketd.render.CueScreenPanelRenderer}),
+     * because a hand test showed that even this compact texture reads as "a
+     * small chest", which is misleading for "we don't actually know what
+     * screen this is".
      */
     private static final Texture CONTAINER_SMALL_TEX = new Texture(BASE_PATH + "generic_54.png", 256, 256, List.of(
             new Band(0, 0, 176, 71),
@@ -252,43 +264,60 @@ public final class ScreenPanelTextures {
     }
 
     /**
-     * The texture drawn on the held panel for {@code kind}. Every
-     * {@link ScreenKind} the P5b task brief lists by name, plus the four
-     * DESIGN.md §7 P5 hand-test fix added ({@link ScreenKind#CONTAINER_SMALL},
-     * {@link ScreenKind#HOPPER}, {@link ScreenKind#SHULKER}, {@link
-     * ScreenKind#DISPENSER}), gets its own texture entry; everything else
-     * ({@link ScreenKind#MODDED}, {@link ScreenKind#UNKNOWN}, and the screen
-     * kinds with no dedicated container GUI at all — {@code PAUSE}/
-     * {@code SETTINGS}/{@code BOOK_READ}/{@code MAP_VIEW}/
-     * {@code ADVANCEMENTS}/{@code RECIPE_BOOK}) falls back to {@link
-     * #CONTAINER_SMALL_TEX} — DESIGN.md §7 P5 hand-test fix (HATA7): the
-     * fallback used to be {@link #GENERIC_54_TEX}, the full double chest,
-     * which meant every unrecognised/undetailed screen showed the single
-     * biggest texture in this table. See {@link #CONTAINER_SMALL_TEX}'s own
-     * Javadoc for why it is not literally {@code generic_27.png}, and for why
-     * it is two {@link Band}s rather than one.
+     * The texture drawn on the held panel for {@code kind}, or
+     * {@link Optional#empty()} when {@code kind} should draw <b>no</b>
+     * container texture at all. Every {@link ScreenKind} the P5b task brief
+     * lists by name, plus the four DESIGN.md §7 P5 hand-test fix added
+     * ({@link ScreenKind#CONTAINER_SMALL}, {@link ScreenKind#HOPPER}, {@link
+     * ScreenKind#SHULKER}, {@link ScreenKind#DISPENSER}), gets its own real
+     * texture entry.
+     *
+     * <p><b>Empty is deliberate, not "unhandled" (protocol-tier bugfix,
+     * 2026-08-09).</b> {@link ScreenKind#MODDED}, {@link ScreenKind#UNKNOWN},
+     * and the screen kinds with no dedicated container GUI at all
+     * ({@code PAUSE}/{@code SETTINGS}/{@code BOOK_READ}/{@code MAP_VIEW}/
+     * {@code ADVANCEMENTS}/{@code RECIPE_BOOK}) used to fall back to {@link
+     * #CONTAINER_SMALL_TEX} (DESIGN.md §7 P5 hand-test fix, HATA7 — before
+     * that, the fallback was {@link #GENERIC_54_TEX}, the full double chest).
+     * Either fallback texture is misleading here for the same underlying
+     * reason: "we don't know what screen this is" is not the same fact as "a
+     * small/large chest", and a hand test on the near/global tier-mixing bug
+     * (see {@code core.protocol.CueBatch}/{@code CueTier}'s Javadoc) showed
+     * exactly this fallback rendering wherever the coarse global tier's
+     * {@code ScreenKind.UNKNOWN} had overwritten a detailed near entry. Now
+     * that the underlying data bug is fixed, {@code UNKNOWN} is still a
+     * perfectly legitimate value in its own right (§9: {@code
+     * shareScreenDetail=false} means every {@code IN_SCREEN} player is
+     * {@code UNKNOWN} on purpose) and should not visually claim to be any
+     * specific container — so the caller ({@code
+     * adapters.bucketd.render.CueScreenPanelRenderer#drawContainerPanel})
+     * draws its own neutral flat fill (the same {@code panel_fill.png} the
+     * chat panel already uses) instead of any container texture when this
+     * returns empty. {@code Optional} makes that "no texture, draw the
+     * neutral panel instead" case impossible to accidentally skip at the call
+     * site, unlike a sentinel texture a caller could forget to special-case.
      */
-    public static Texture forScreenKind(ScreenKind kind) {
+    public static Optional<Texture> forScreenKind(ScreenKind kind) {
         Objects.requireNonNull(kind, "kind");
         return switch (kind) {
-            case INVENTORY -> INVENTORY_TEX;
-            case CONTAINER -> GENERIC_54_TEX;
-            case CONTAINER_SMALL -> CONTAINER_SMALL_TEX;
-            case HOPPER -> HOPPER_TEX;
-            case SHULKER -> SHULKER_TEX;
-            case DISPENSER -> DISPENSER_TEX;
-            case CRAFTING -> CRAFTING_TABLE_TEX;
-            case FURNACE -> FURNACE_TEX;
-            case ANVIL -> ANVIL_TEX;
-            case ENCHANTING -> ENCHANTING_TABLE_TEX;
-            case BREWING -> BREWING_STAND_TEX;
-            case MERCHANT -> MERCHANT_TEX;
-            case BEACON -> BEACON_TEX;
-            case LOOM -> LOOM_TEX;
-            case SMITHING -> SMITHING_TEX;
-            case STONECUTTER -> STONECUTTER_TEX;
-            case CARTOGRAPHY -> CARTOGRAPHY_TABLE_TEX;
-            case MODDED, UNKNOWN, PAUSE, SETTINGS, BOOK_READ, MAP_VIEW, ADVANCEMENTS, RECIPE_BOOK -> CONTAINER_SMALL_TEX;
+            case INVENTORY -> Optional.of(INVENTORY_TEX);
+            case CONTAINER -> Optional.of(GENERIC_54_TEX);
+            case CONTAINER_SMALL -> Optional.of(CONTAINER_SMALL_TEX);
+            case HOPPER -> Optional.of(HOPPER_TEX);
+            case SHULKER -> Optional.of(SHULKER_TEX);
+            case DISPENSER -> Optional.of(DISPENSER_TEX);
+            case CRAFTING -> Optional.of(CRAFTING_TABLE_TEX);
+            case FURNACE -> Optional.of(FURNACE_TEX);
+            case ANVIL -> Optional.of(ANVIL_TEX);
+            case ENCHANTING -> Optional.of(ENCHANTING_TABLE_TEX);
+            case BREWING -> Optional.of(BREWING_STAND_TEX);
+            case MERCHANT -> Optional.of(MERCHANT_TEX);
+            case BEACON -> Optional.of(BEACON_TEX);
+            case LOOM -> Optional.of(LOOM_TEX);
+            case SMITHING -> Optional.of(SMITHING_TEX);
+            case STONECUTTER -> Optional.of(STONECUTTER_TEX);
+            case CARTOGRAPHY -> Optional.of(CARTOGRAPHY_TABLE_TEX);
+            case MODDED, UNKNOWN, PAUSE, SETTINGS, BOOK_READ, MAP_VIEW, ADVANCEMENTS, RECIPE_BOOK -> Optional.empty();
         };
     }
 }

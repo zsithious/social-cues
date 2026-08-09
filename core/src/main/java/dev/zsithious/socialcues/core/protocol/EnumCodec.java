@@ -12,6 +12,7 @@ public final class EnumCodec {
 
     private static final Activity[] ACTIVITIES = Activity.values();
     private static final ScreenKind[] SCREEN_KINDS = ScreenKind.values();
+    private static final CueTier[] CUE_TIERS = CueTier.values();
 
     private EnumCodec() {
     }
@@ -36,5 +37,16 @@ public final class EnumCodec {
             throw new ProtocolDecodeException("ScreenKind ordinal out of range: " + wireValue);
         }
         return SCREEN_KINDS[wireValue];
+    }
+
+    public static int toWire(CueTier tier) {
+        return tier.ordinal();
+    }
+
+    public static CueTier cueTierFromWire(int wireValue) {
+        if (wireValue < 0 || wireValue >= CUE_TIERS.length) {
+            throw new ProtocolDecodeException("CueTier ordinal out of range: " + wireValue);
+        }
+        return CUE_TIERS[wireValue];
     }
 }

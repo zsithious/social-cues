@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 
@@ -23,10 +24,31 @@ import dev.zsithious.socialcues.core.state.ScreenKind;
  */
 class ScreenPanelTexturesTest {
 
+    /**
+     * The kinds {@link ScreenPanelTextures#forScreenKind} deliberately returns
+     * {@link Optional#empty()} for — "a screen is open, but naming a container
+     * would be a lie" (protocol-tier bugfix, 2026-08-09; see that method's own
+     * Javadoc). Listed once here because several tests need to either skip
+     * them or assert exactly this set.
+     */
+    private static final List<ScreenKind> NEUTRAL_KINDS = List.of(
+            ScreenKind.MODDED, ScreenKind.UNKNOWN, ScreenKind.PAUSE, ScreenKind.SETTINGS,
+            ScreenKind.BOOK_READ, ScreenKind.MAP_VIEW, ScreenKind.ADVANCEMENTS, ScreenKind.RECIPE_BOOK);
+
+    private static ScreenPanelTextures.Texture texture(ScreenKind kind) {
+        return ScreenPanelTextures.forScreenKind(kind)
+                .orElseThrow(() -> new AssertionError("expected a texture for " + kind));
+    }
+
     @Test
-    void everyScreenKindMapsToAWellFormedTexture() {
+    void everyTextureBearingScreenKindMapsToAWellFormedTexture() {
         for (ScreenKind kind : ScreenKind.values()) {
-            ScreenPanelTextures.Texture texture = ScreenPanelTextures.forScreenKind(kind);
+            Optional<ScreenPanelTextures.Texture> textureOpt = ScreenPanelTextures.forScreenKind(kind);
+            if (NEUTRAL_KINDS.contains(kind)) {
+                assertTrue(textureOpt.isEmpty(), "expected no texture for the neutral kind " + kind);
+                continue;
+            }
+            ScreenPanelTextures.Texture texture = textureOpt.orElse(null);
             assertNotNull(texture, "no texture for " + kind);
             assertFalse(texture.path().isBlank(), "blank path for " + kind);
             assertTrue(texture.path().startsWith("textures/gui/container/"), "unexpected path for " + kind);
@@ -65,27 +87,42 @@ class ScreenPanelTexturesTest {
         expected.put(ScreenKind.DISPENSER, "textures/gui/container/dispenser.png");
 
         expected.forEach((kind, path) ->
-                assertEquals(path, ScreenPanelTextures.forScreenKind(kind).path(), "wrong texture for " + kind));
+                assertEquals(path, texture(kind).path(), "wrong texture for " + kind));
     }
 
     /**
-     * DESIGN.md §7 P5 hand-test fix (HATA7): the fallback used to be
-     * generic_54.png (the full double chest); it is now the same compact
-     * texture {@link ScreenKind#CONTAINER_SMALL} uses, which the task brief
-     * called {@code generic_27.png} -- see {@code ScreenPanelTextures
-     * .CONTAINER_SMALL_TEX}'s Javadoc for why this project could not literally
-     * serve that filename (it does not exist in vanilla's own assets).
+     * Protocol-tier bugfix, 2026-08-09: there is no catch-all fallback texture
+     * anymore. It used to be {@code generic_54.png} (the full double chest),
+     * then — DESIGN.md §7 P5 hand-test fix (HATA7) — the compact
+     * {@link ScreenKind#CONTAINER_SMALL} texture; both told the same lie, just
+     * at different sizes, since "we don't know what screen this is" is not the
+     * fact "a chest of some size". These kinds now render no container texture
+     * at all and the adapter draws a neutral flat panel instead (see
+     * {@code CueScreenPanelRenderer#drawNeutralPanel}).
      */
     @Test
-    void everythingElseFallsBackToTheCompactContainerTexture() {
-        ScreenKind[] fallbackKinds = {
-                ScreenKind.MODDED, ScreenKind.UNKNOWN, ScreenKind.PAUSE, ScreenKind.SETTINGS,
-                ScreenKind.BOOK_READ, ScreenKind.MAP_VIEW, ScreenKind.ADVANCEMENTS, ScreenKind.RECIPE_BOOK
-        };
-        ScreenPanelTextures.Texture expected = ScreenPanelTextures.forScreenKind(ScreenKind.CONTAINER_SMALL);
-        for (ScreenKind kind : fallbackKinds) {
-            assertEquals(expected, ScreenPanelTextures.forScreenKind(kind),
-                    "expected the compact-container fallback for " + kind);
+    void neutralScreenKindsHaveNoTextureAtAll() {
+        for (ScreenKind kind : NEUTRAL_KINDS) {
+            assertTrue(ScreenPanelTextures.forScreenKind(kind).isEmpty(),
+                    "expected no texture for " + kind);
+        }
+    }
+
+    /**
+     * The complement of {@link #neutralScreenKindsHaveNoTextureAtAll}: no kind
+     * outside {@link #NEUTRAL_KINDS} may quietly become textureless. Without
+     * this, adding a {@code ScreenKind} and wiring it to
+     * {@code Optional.empty()} in the exhaustive switch would compile, pass
+     * every other test here, and silently render as a blank panel forever.
+     */
+    @Test
+    void everyOtherScreenKindStillHasARealTexture() {
+        for (ScreenKind kind : ScreenKind.values()) {
+            if (NEUTRAL_KINDS.contains(kind)) {
+                continue;
+            }
+            assertTrue(ScreenPanelTextures.forScreenKind(kind).isPresent(),
+                    "expected a real texture for " + kind);
         }
     }
 
@@ -101,8 +138,8 @@ class ScreenPanelTexturesTest {
         ScreenKind singleChest = ScreenKindMapper.fromRegistryId("minecraft:generic_9x3");
         assertEquals(ScreenKind.CONTAINER_SMALL, singleChest);
 
-        ScreenPanelTextures.Texture small = ScreenPanelTextures.forScreenKind(ScreenKind.CONTAINER_SMALL);
-        ScreenPanelTextures.Texture doubleChest = ScreenPanelTextures.forScreenKind(ScreenKind.CONTAINER);
+        ScreenPanelTextures.Texture small = texture(ScreenKind.CONTAINER_SMALL);
+        ScreenPanelTextures.Texture doubleChest = texture(ScreenKind.CONTAINER);
 
         assertTrue(small.regionHeight() < doubleChest.regionHeight(),
                 "expected the single-chest texture's region to be shorter than the double chest's: "
@@ -127,7 +164,7 @@ class ScreenPanelTexturesTest {
         };
         Map<String, ScreenKind> seen = new HashMap<>();
         for (ScreenKind kind : explicit) {
-            String path = ScreenPanelTextures.forScreenKind(kind).path();
+            String path = texture(kind).path();
             ScreenKind previous = seen.put(path, kind);
             assertTrue(previous == null, path + " assigned to both " + previous + " and " + kind);
         }
@@ -136,28 +173,11 @@ class ScreenPanelTexturesTest {
     /** DESIGN.md §7 P5b uygulama notu: the one filename that breaks the "all textures are 256x256" assumption. */
     @Test
     void merchantCanvasIsWiderThanSquareBecauseTheTradeListGuiIsWide() {
-        ScreenPanelTextures.Texture villager = ScreenPanelTextures.forScreenKind(ScreenKind.MERCHANT);
+        ScreenPanelTextures.Texture villager = texture(ScreenKind.MERCHANT);
         assertEquals(512, villager.canvasWidth());
         assertEquals(256, villager.canvasHeight());
         assertEquals(276, villager.regionWidth());
         assertEquals(166, villager.regionHeight());
-    }
-
-    /**
-     * DESIGN.md §7 P5 hand-test fix (HATA7): this used to be true (both
-     * shared generic_54.png, the full double chest) and was exactly the bug --
-     * an unrecognised screen showed the single biggest texture in the table.
-     * Inverted to lock the fix in: the fallback is now the compact texture,
-     * strictly smaller than the double chest's.
-     */
-    @Test
-    void fallbackNoLongerSharesContainersFullDoubleChestTexture() {
-        ScreenPanelTextures.Texture container = ScreenPanelTextures.forScreenKind(ScreenKind.CONTAINER);
-        ScreenPanelTextures.Texture fallback = ScreenPanelTextures.forScreenKind(ScreenKind.UNKNOWN);
-
-        assertTrue(fallback.regionHeight() < container.regionHeight(),
-                "expected the fallback to be visibly smaller than the double chest: "
-                        + "fallback=" + fallback.regionHeight() + " container=" + container.regionHeight());
     }
 
     @Test
@@ -179,7 +199,10 @@ class ScreenPanelTexturesTest {
     @Test
     void everyTextureBandFitsInsideItsOwnCanvas() {
         for (ScreenKind kind : ScreenKind.values()) {
-            ScreenPanelTextures.Texture texture = ScreenPanelTextures.forScreenKind(kind);
+            if (NEUTRAL_KINDS.contains(kind)) {
+                continue;
+            }
+            ScreenPanelTextures.Texture texture = texture(kind);
             for (ScreenPanelTextures.Band band : texture.bands()) {
                 assertTrue(band.u() + band.width() <= texture.canvasWidth(),
                         "band " + band + " overruns canvas width for " + kind);
@@ -192,7 +215,10 @@ class ScreenPanelTexturesTest {
     @Test
     void regionWidthIsTheWidestBandAndRegionHeightIsTheSumOfBandHeights() {
         for (ScreenKind kind : ScreenKind.values()) {
-            ScreenPanelTextures.Texture texture = ScreenPanelTextures.forScreenKind(kind);
+            if (NEUTRAL_KINDS.contains(kind)) {
+                continue;
+            }
+            ScreenPanelTextures.Texture texture = texture(kind);
             int expectedWidth = 0;
             int expectedHeight = 0;
             for (ScreenPanelTextures.Band band : texture.bands()) {
@@ -216,7 +242,7 @@ class ScreenPanelTexturesTest {
      */
     @Test
     void containerSmallIsTheDocumentedTwoBandComposite() {
-        ScreenPanelTextures.Texture texture = ScreenPanelTextures.forScreenKind(ScreenKind.CONTAINER_SMALL);
+        ScreenPanelTextures.Texture texture = texture(ScreenKind.CONTAINER_SMALL);
 
         assertEquals(
                 List.of(new ScreenPanelTextures.Band(0, 0, 176, 71), new ScreenPanelTextures.Band(0, 126, 176, 96)),
@@ -228,18 +254,21 @@ class ScreenPanelTexturesTest {
     /**
      * DESIGN.md §7 P5 hand-test follow-up: every OTHER texture in the table
      * is still the single-band common case -- the two-band composite is one
-     * deliberate exception (reached both directly via {@link
-     * ScreenKind#CONTAINER_SMALL} and via every kind that falls back to it,
-     * see {@link #everythingElseFallsBackToTheCompactContainerTexture}), not
-     * the start of a pattern. Compared by the resolved {@code Texture} itself
-     * (not by {@code ScreenKind} identity), since several kinds resolve to
-     * that exact same two-band instance through the fallback.
+     * deliberate exception, not the start of a pattern. Since the 2026-08-09
+     * protocol-tier bugfix removed the catch-all fallback, {@link
+     * ScreenKind#CONTAINER_SMALL} is the only kind that resolves to it at all
+     * (before, every unmapped kind did too), so the comparison is still made
+     * against the resolved {@code Texture} rather than by {@code ScreenKind}
+     * identity -- cheap insurance if another kind is ever pointed at it.
      */
     @Test
     void everyTextureOtherThanTheTwoBandCompositeHasExactlyOneBand() {
-        ScreenPanelTextures.Texture twoBandComposite = ScreenPanelTextures.forScreenKind(ScreenKind.CONTAINER_SMALL);
+        ScreenPanelTextures.Texture twoBandComposite = texture(ScreenKind.CONTAINER_SMALL);
         for (ScreenKind kind : ScreenKind.values()) {
-            ScreenPanelTextures.Texture texture = ScreenPanelTextures.forScreenKind(kind);
+            if (NEUTRAL_KINDS.contains(kind)) {
+                continue;
+            }
+            ScreenPanelTextures.Texture texture = texture(kind);
             if (texture.equals(twoBandComposite)) {
                 continue;
             }
