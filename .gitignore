@@ -1,6 +1,9 @@
 .gradle/
 build/
 run/
+# mc.gradle.kts' two named hand-testing clients (see DESIGN.md's test setup).
+run-a/
+run-b/
 out/
 *.class
 .idea/

@@ -56,10 +56,16 @@ import net.minecraft.util.Identifier;
  * applies in case another mod's mixin on this exact method wants to cancel
  * or fully replace it.
  *
- * <p><b>Never throws:</b> any lookup/render failure here is caught and
- * logged rather than propagated, so a conflict with another tab-list mod (or
- * a genuine bug) degrades to "no icon this row", never a crashed or blanked
- * tab list (DESIGN.md §11).
+ * <p><b>Never throws:</b> any lookup/render failure here is caught rather
+ * than propagated, so a conflict with another tab-list mod (or a genuine bug)
+ * degrades to "no tab list icons", never a crashed or blanked tab list
+ * (DESIGN.md §11). It is caught <em>loudly</em> and once, though — the same
+ * stance as {@code ClientCueCapture.tickGuarded} and
+ * {@code CueBillboardRenderer.renderGuarded}. P4b's original
+ * {@code Level.FINE} log was invisible under the default logging config,
+ * which is exactly the wrong behaviour for a layer whose only failure mode is
+ * "nothing appears": a hand test could not tell a swallowed bug apart from a
+ * player who genuinely had no cue.
  */
 @Mixin(value = PlayerListHud.class, priority = 2000)
 public class PlayerListHudMixin {
@@ -75,9 +81,15 @@ public class PlayerListHudMixin {
     /** Gap, in pixels, between our icon and the ping/latency icon it sits to the left of. */
     private static final int GAP_BEFORE_PING_ICON = 2;
 
+    /** See the class Javadoc: one loud line, then quiet, never a per-row log flood. */
+    private static boolean socialcues$disabledByError;
+
     @Inject(method = "renderLatencyIcon", at = @At("HEAD"))
     private void socialcues$drawCueIcon(DrawContext context, int width, int x, int y, PlayerListEntry entry,
             CallbackInfo ci) {
+        if (socialcues$disabledByError) {
+            return;
+        }
         try {
             if (entry == null || entry.getProfile() == null) {
                 return;
@@ -99,10 +111,18 @@ public class PlayerListHudMixin {
             // Right-aligned within the row's reserved column, immediately left of the
             // 10px-wide ping icon (renderLatencyIcon draws it at x + width - 11).
             int iconX = x + width - 11 - GAP_BEFORE_PING_ICON - ICON_SIZE;
-            context.drawTexturedQuad(CUES_TEXTURE, iconX, iconX + ICON_SIZE, y, y + ICON_SIZE,
+            // Argument order is (x1, y1, x2, y2), *not* (x1, x2, y1, y2) — javap -c
+            // traced through both private overloads: the public entry point forwards
+            // (p2, p4, p3, p5) into a private (x1, x2, y1, y2) one, which in turn feeds
+            // TexturedQuadGuiElementRenderState's (x1, y1, x2, y2). P4b assumed the
+            // inner order and so passed a corner-swapped, off-screen rectangle: the
+            // icon never appeared during the P4 hand test, silently and with no error.
+            context.drawTexturedQuad(CUES_TEXTURE, iconX, y, iconX + ICON_SIZE, y + ICON_SIZE,
                     CueIconAtlas.minU(cell), CueIconAtlas.maxU(cell), CueIconAtlas.minV(cell), CueIconAtlas.maxV(cell));
-        } catch (RuntimeException e) {
-            LOGGER.log(Level.FINE, "socialcues: failed to draw a tab list cue icon", e);
+        } catch (Throwable t) {
+            socialcues$disabledByError = true;
+            LOGGER.log(Level.SEVERE, "socialcues: layer 2 (tab list) rendering threw and has been disabled "
+                    + "for this session. This is a bug — please report it.", t);
         }
     }
 }

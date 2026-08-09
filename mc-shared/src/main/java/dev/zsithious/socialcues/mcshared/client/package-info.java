@@ -11,14 +11,12 @@
  * from {@code SocialCuesClientInitializer}, never from the common
  * entrypoint, so a dedicated server never links these classes.
  *
- * <p>P4b (DESIGN.md §7) adds two more pieces, both still MC-import-free
- * themselves: {@link dev.zsithious.socialcues.mcshared.client.LocalCueState},
- * the local player's own locally-observed cue (what {@code
- * core.client.RemoteCueStore} can never hold, backing Layer 1's
- * {@code showOnSelf}), and {@link
- * dev.zsithious.socialcues.mcshared.client.FeatureRendererBootstrap}, the
- * {@link java.util.ServiceLoader}-discovered seam a render-capable bucket
- * uses to register its Layer 1 feature renderer(s) without this
- * bucket-agnostic module ever importing a bucket-specific class.
+ * <p>P4b (DESIGN.md §7) adds one more piece, still MC-import-free itself:
+ * {@link dev.zsithious.socialcues.mcshared.client.LocalCueState}, the local
+ * player's own locally-observed cue (what {@code core.client.RemoteCueStore}
+ * can never hold, backing Layer 1's {@code showOnSelf}). Rendering itself
+ * needs no seam here: both layers are bucket-local mixins, which Fabric
+ * Loader activates from each bucket's own {@code socialcues.mixins.json}
+ * without this bucket-agnostic module having to bootstrap anything.
  */
 package dev.zsithious.socialcues.mcshared.client;

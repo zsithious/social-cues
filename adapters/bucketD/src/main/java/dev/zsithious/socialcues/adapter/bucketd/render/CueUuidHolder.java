@@ -6,7 +6,7 @@ import java.util.UUID;
  * DESIGN.md §7 P4b — a "duck interface" mixed into {@code PlayerEntityRenderState}
  * by {@code adapter.bucketd.mixin.PlayerEntityRenderStateMixin}, populated by
  * {@code adapter.bucketd.mixin.PlayerEntityRendererMixin}, and read by
- * {@link CueBillboardFeatureRenderer}.
+ * {@link CueBillboardRenderer}.
  *
  * <p><b>Why a render state needs this at all:</b> {@code javap -c}-verified
  * on the 1.21.11 mapped jar — {@code net.minecraft.client.render.entity.state.EntityRenderState}

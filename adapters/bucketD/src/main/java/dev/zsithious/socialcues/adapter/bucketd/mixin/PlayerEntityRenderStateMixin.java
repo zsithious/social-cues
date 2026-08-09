@@ -18,9 +18,9 @@ import net.minecraft.client.render.entity.state.PlayerEntityRenderState;
  * <p>Mixed into {@code PlayerEntityRenderState} specifically (not the more
  * general {@code EntityRenderState} base) because only player (and mannequin)
  * render states are ever fed to
- * {@link dev.zsithious.socialcues.adapter.bucketd.render.CueBillboardFeatureRenderer} —
- * see that class and {@code adapter.bucketd.render.BucketDFeatureRendererBootstrap}
- * for how the registration is scoped to player renderers only.
+ * {@link dev.zsithious.socialcues.adapter.bucketd.render.CueBillboardRenderer} —
+ * {@link PlayerEntityRendererMixin} only hooks {@code PlayerEntityRenderer},
+ * so nothing else can reach it.
  */
 @Mixin(PlayerEntityRenderState.class)
 public class PlayerEntityRenderStateMixin implements CueUuidHolder {
