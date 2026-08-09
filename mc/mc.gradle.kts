@@ -55,6 +55,33 @@ dependencies {
     include(project(":core"))
 }
 
+loom {
+    runs {
+        // Two named client runs so a single machine can put two players on one
+        // server at once — the only way to hand-test Layer 1/2 at all, since a
+        // cue is by definition something *another* player's client renders.
+        // Separate runDirs (not just usernames) because two clients sharing one
+        // game directory fight over options.txt and the log file; separate
+        // usernames because a server refuses a second login with a name that is
+        // already online. Requires an offline-mode server (galactic and its
+        // Velocity proxy both run online-mode=false).
+        create("clientA") {
+            client()
+            configName = "Client A (SocialCuesA)"
+            runDir = "run-a"
+            programArgs("--username", "SocialCuesA")
+            vmArgs("-Xmx2G")
+        }
+        create("clientB") {
+            client()
+            configName = "Client B (SocialCuesB)"
+            runDir = "run-b"
+            programArgs("--username", "SocialCuesB")
+            vmArgs("-Xmx2G")
+        }
+    }
+}
+
 sourceSets {
     main {
         java {
