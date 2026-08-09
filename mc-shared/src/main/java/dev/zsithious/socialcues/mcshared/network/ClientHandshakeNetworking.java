@@ -13,6 +13,7 @@ import dev.zsithious.socialcues.core.protocol.S2CMessage;
 import dev.zsithious.socialcues.core.protocol.S2CMessages;
 import dev.zsithious.socialcues.core.protocol.ServerHello;
 import dev.zsithious.socialcues.mcshared.client.ClientCueCapture;
+import dev.zsithious.socialcues.mcshared.client.PoseBlendDriver;
 import dev.zsithious.socialcues.mcshared.client.RemoteCueStoreHolder;
 import dev.zsithious.socialcues.mcshared.client.ServerPolicyState;
 
@@ -71,6 +72,10 @@ public final class ClientHandshakeNetworking {
             // over from a previous server (possibly a completely different
             // player set, or the same UUID meaning someone else entirely).
             RemoteCueStoreHolder.get().clear();
+            // P5a (DESIGN.md §7 Katman 3): same reasoning again for Layer 3's
+            // pose blends — a mid-fade pose from a previous server must not
+            // survive into a new session either.
+            PoseBlendDriver.reset();
             if (!ClientPlayNetworking.canSend(SocialCuesPayload.ID)) {
                 // Pre-filter only (DESIGN.md's "ön filtre"): the true source of
                 // truth is still whether a ServerHello ever arrives, handled
@@ -89,6 +94,7 @@ public final class ClientHandshakeNetworking {
             ServerPolicyState.reset();
             ClientCueCapture.reset();
             RemoteCueStoreHolder.get().clear();
+            PoseBlendDriver.reset();
         });
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> HANDSHAKE.tick());

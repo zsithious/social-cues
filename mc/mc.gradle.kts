@@ -63,21 +63,29 @@ loom {
         // Separate runDirs (not just usernames) because two clients sharing one
         // game directory fight over options.txt and the log file; separate
         // usernames because a server refuses a second login with a name that is
-        // already online. Requires an offline-mode server (galactic and its
-        // Velocity proxy both run online-mode=false).
+        // already online. Requires an offline-mode server (~/social-cues-testserver,
+        // 127.0.0.1:25565; galactic and its Velocity proxy also run online-mode=false).
+        //
+        // Both clients are deliberately kept small: two Minecraft instances plus a
+        // server share this machine with whatever else is running on it. 1G heap is
+        // ample at render distance 2 on a superflat world, the GC thread counts stop
+        // two JVMs from between them claiming every core, and the 854x480 window is
+        // both cheaper to draw and small enough to put the two side by side (which
+        // is how a cue gets watched: you act on one, you read the icon on the other).
+        // The matching low graphics settings live in each runDir's own options.txt.
         create("clientA") {
             client()
             configName = "Client A (SocialCuesA)"
             runDir = "run-a"
-            programArgs("--username", "SocialCuesA")
-            vmArgs("-Xmx2G")
+            programArgs("--username", "SocialCuesA", "--width", "854", "--height", "480")
+            vmArgs("-Xmx1G", "-XX:+UseG1GC", "-XX:ParallelGCThreads=2", "-XX:ConcGCThreads=1")
         }
         create("clientB") {
             client()
             configName = "Client B (SocialCuesB)"
             runDir = "run-b"
-            programArgs("--username", "SocialCuesB")
-            vmArgs("-Xmx2G")
+            programArgs("--username", "SocialCuesB", "--width", "854", "--height", "480")
+            vmArgs("-Xmx1G", "-XX:+UseG1GC", "-XX:ParallelGCThreads=2", "-XX:ConcGCThreads=1")
         }
     }
 }

@@ -9,6 +9,7 @@ import dev.zsithious.socialcues.core.client.BillboardCueVisibility;
 import dev.zsithious.socialcues.core.client.ClientConfigData;
 import dev.zsithious.socialcues.core.client.CueDisplaySelector;
 import dev.zsithious.socialcues.core.client.CueIconAtlas;
+import dev.zsithious.socialcues.core.client.CueIconMotion;
 import dev.zsithious.socialcues.core.client.DistanceFade;
 import dev.zsithious.socialcues.core.state.PlayerCue;
 import dev.zsithious.socialcues.mcshared.client.LocalCueState;
@@ -25,6 +26,7 @@ import net.minecraft.client.render.entity.state.PlayerEntityRenderState;
 import net.minecraft.client.render.state.CameraRenderState;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.math.RotationAxis;
 import net.minecraft.util.math.Vec3d;
 
 /**
@@ -80,6 +82,19 @@ import net.minecraft.util.math.Vec3d;
  * {@link VertexConsumer} for a standard
  * {@link net.minecraft.client.render.RenderLayer}, into which this class emits
  * one ordinary textured quad — no shader, no raw GL call.
+ *
+ * <p><b>P5b task 3 — {@link CueIconMotion}:</b> the icon's own small idle bob
+ * (added to {@code rise}, so it moves along the same vertical axis the icon
+ * is already placed on) and tilt (a roll about local {@code +Z} — the view
+ * axis once {@code camera.orientation} has been multiplied in, see {@link
+ * #drawBillboard}) are applied unconditionally here, never gated on {@code
+ * layer3Enabled}: this is Layer 1's own motion and DESIGN.md requires it to
+ * keep working with the pose layer switched off (see {@link CueIconMotion}'s
+ * own class Javadoc). {@link CueScreenPanelRenderer} — the P5b held panel,
+ * called from the same mixin hook right after this class — is unrelated: it
+ * genuinely is Layer 3 content, only hosted here for the matrix-space reasons
+ * this class's own Javadoc explains, and so it does gate on {@code
+ * layer3Enabled}.
  */
 public final class CueBillboardRenderer {
 
@@ -195,11 +210,18 @@ public final class CueBillboardRenderer {
 
         int cell = CueDisplaySelector.atlasCellFor(cue);
         float half = (BASE_ICON_SIZE * (float) config.scale()) / 2.0f;
+        // P5b task 3: CueIconMotion is Layer 1's own idle motion, deliberately
+        // independent of layer3Enabled/PoseAnimator (see that class's Javadoc) --
+        // it is only ever zero for every cue but AFK, so this costs nothing for
+        // the common case and needs no extra gate here.
+        float bob = CueIconMotion.bobBlocks(cue, state.age);
+        float tilt = CueIconMotion.tiltRadians(cue, state.age);
         float rise = VANILLA_LABEL_RISE
                 + (state.playerName != null ? SECOND_LABEL_STEP : 0.0f)
-                + LABEL_HALF_HEIGHT + LABEL_CLEARANCE + half;
+                + LABEL_HALF_HEIGHT + LABEL_CLEARANCE + half
+                + bob;
 
-        drawBillboard(matrices, queue, camera, state.nameLabelPos, rise, cell, half, state.light, (float) alpha);
+        drawBillboard(matrices, queue, camera, state.nameLabelPos, rise, cell, half, state.light, (float) alpha, tilt);
     }
 
     private static String resolvePlayerName(MinecraftClient client, UUID id) {
@@ -214,7 +236,8 @@ public final class CueBillboardRenderer {
     }
 
     private static void drawBillboard(MatrixStack matrices, OrderedRenderCommandQueue queue,
-            CameraRenderState camera, Vec3d anchor, float rise, int cell, float half, int light, float alpha) {
+            CameraRenderState camera, Vec3d anchor, float rise, int cell, float half, int light, float alpha,
+            float tilt) {
         matrices.push();
         matrices.translate(anchor.x, anchor.y + rise, anchor.z);
         // Exactly the billboard idiom vanilla's own label rendering uses (javap -c,
@@ -223,6 +246,12 @@ public final class CueBillboardRenderer {
         // vanilla then has to flip *only* Y (scale(0.025f, -0.025f, 0.025f)) to draw
         // its y-down text. Our quad geometry is already y-up, so it needs no flip.
         matrices.multiply(camera.orientation);
+        if (tilt != 0f) {
+            // CueIconMotion.tiltRadians: "roll about the view axis" -- after the
+            // camera-orientation multiply above, local +Z already points straight at
+            // the camera (the view axis), so rolling about local Z is exactly that.
+            matrices.multiply(RotationAxis.POSITIVE_Z.rotation(tilt));
+        }
 
         float minU = CueIconAtlas.minU(cell);
         float maxU = CueIconAtlas.maxU(cell);

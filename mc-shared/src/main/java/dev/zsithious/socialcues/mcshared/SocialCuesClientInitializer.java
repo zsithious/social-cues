@@ -1,6 +1,7 @@
 package dev.zsithious.socialcues.mcshared;
 
 import dev.zsithious.socialcues.mcshared.client.ClientCueCapture;
+import dev.zsithious.socialcues.mcshared.client.PoseBlendDriver;
 import dev.zsithious.socialcues.mcshared.config.ClientConfigState;
 import dev.zsithious.socialcues.mcshared.network.ClientHandshakeNetworking;
 
@@ -33,6 +34,12 @@ public final class SocialCuesClientInitializer implements ClientModInitializer {
         // (see ClientConfigState.SHARE_PREFS's Javadoc for why no further
         // wiring is needed after a future P6 reload).
         ClientCueCapture.setSharePrefs(ClientConfigState.SHARE_PREFS);
+
+        // DESIGN.md §7 Katman 3, P5a: the bucket-agnostic pose-blend clock. Only
+        // the model mixin that reads PoseBlendDriver.blendFor(...) is bucket-local
+        // (adapter.bucketd.mixin.PlayerEntityModelMixin so far); the driver itself
+        // is shared, exactly like ClientCueCapture above.
+        PoseBlendDriver.register();
 
         // No render registration happens here. P4b originally registered Layer 1 as
         // a Fabric API feature renderer through a ServiceLoader-discovered, per-bucket
