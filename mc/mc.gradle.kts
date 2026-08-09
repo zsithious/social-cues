@@ -73,19 +73,27 @@ loom {
         // both cheaper to draw and small enough to put the two side by side (which
         // is how a cue gets watched: you act on one, you read the icon on the other).
         // The matching low graphics settings live in each runDir's own options.txt.
+        // ...and both of them turn the mod's own FINE logging on (see
+        // hand-test-logging.properties for why: ClientCueCapture.logTransition
+        // is the only line that says what a client actually decided to send,
+        // and at the default INFO level it is invisible — which has now cost
+        // two separate hand-test rounds).
+        val julConfig = rootProject.file("mc/hand-test-logging.properties").absolutePath
         create("clientA") {
             client()
             configName = "Client A (SocialCuesA)"
             runDir = "run-a"
             programArgs("--username", "SocialCuesA", "--width", "854", "--height", "480")
-            vmArgs("-Xmx1G", "-XX:+UseG1GC", "-XX:ParallelGCThreads=2", "-XX:ConcGCThreads=1")
+            vmArgs("-Xmx1G", "-XX:+UseG1GC", "-XX:ParallelGCThreads=2", "-XX:ConcGCThreads=1",
+                    "-Djava.util.logging.config.file=$julConfig")
         }
         create("clientB") {
             client()
             configName = "Client B (SocialCuesB)"
             runDir = "run-b"
             programArgs("--username", "SocialCuesB", "--width", "854", "--height", "480")
-            vmArgs("-Xmx1G", "-XX:+UseG1GC", "-XX:ParallelGCThreads=2", "-XX:ConcGCThreads=1")
+            vmArgs("-Xmx1G", "-XX:+UseG1GC", "-XX:ParallelGCThreads=2", "-XX:ConcGCThreads=1",
+                    "-Djava.util.logging.config.file=$julConfig")
         }
     }
 }
