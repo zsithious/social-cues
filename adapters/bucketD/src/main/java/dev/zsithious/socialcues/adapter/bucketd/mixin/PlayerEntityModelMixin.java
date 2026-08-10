@@ -11,13 +11,17 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import dev.zsithious.socialcues.adapter.bucketd.render.CueUuidHolder;
+import dev.zsithious.socialcues.core.client.BillboardCueVisibility;
+import dev.zsithious.socialcues.core.client.ClientConfigData;
 import dev.zsithious.socialcues.core.client.PoseAnimator;
 import dev.zsithious.socialcues.core.client.PoseBlend;
 import dev.zsithious.socialcues.core.client.PoseFrame;
 import dev.zsithious.socialcues.mcshared.client.PoseBlendDriver;
 import dev.zsithious.socialcues.mcshared.config.ClientConfigState;
 
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.model.ModelPart;
+import net.minecraft.client.network.PlayerListEntry;
 import net.minecraft.client.render.entity.model.PlayerEntityModel;
 import net.minecraft.client.render.entity.state.PlayerEntityRenderState;
 
@@ -100,6 +104,19 @@ import net.minecraft.client.render.entity.state.PlayerEntityRenderState;
  * logs exactly once, at {@code SEVERE}, never {@code FINE} (DESIGN.md §7's
  * P4 hand-test note: a swallowed, invisible-by-default log hid a real bug
  * for an entire session once already).
+ *
+ * <p><b>{@code showOnSelf} (P6 §4.3) — closing a gap this class's own P5a
+ * task note left open on purpose.</b> That note recorded, as an explicit
+ * non-decision rather than a bug, that this mixin applied no self/
+ * third-person check at all: "Mixin, DESIGN.md §7 'Kendi oyuncusu' maddesinin
+ * genel showOnSelf kısıtını uygulamıyor ... Bugünkü davranış: üçüncü şahıs
+ * kamerada kendi karakterin de ... pozlanır." P6 closes it the same way
+ * Layer 1 already handles it: {@link BillboardCueVisibility#passesSharedRules}
+ * (not {@link BillboardCueVisibility#shouldRender} — that would also fold in
+ * Layer 1's own {@code layer1Enabled} gate, see its Javadoc for the P6 §4.4
+ * split this mixin must not reintroduce), fed the same self/third-person/
+ * distance/mute inputs {@code CueScreenPanelRenderer.render} already gathers
+ * for Layer 3's held panel — see {@link #socialcues$apply}.
  */
 @Mixin(value = PlayerEntityModel.class, priority = 2000)
 public class PlayerEntityModelMixin {
@@ -126,7 +143,8 @@ public class PlayerEntityModelMixin {
     }
 
     private void socialcues$apply(PlayerEntityRenderState state) {
-        if (!ClientConfigState.get().layer3Enabled()) {
+        ClientConfigData config = ClientConfigState.get();
+        if (!config.layer3Enabled()) {
             return; // Cheapest possible bail before any lookup (DESIGN.md §3.5 precedent: a disabled layer costs nothing).
         }
 
@@ -141,9 +159,27 @@ public class PlayerEntityModelMixin {
         }
         PoseBlend.Blend blend = blendOpt.get();
 
-        PoseFrame frame = PoseAnimator.frameFor(blend.cue(), state.age, blend.weight());
+        // P6 §4.1: reducedMotion is the viewer's own setting, passed in rather
+        // than read inside core -- see PoseAnimator's own Javadoc.
+        PoseFrame frame = PoseAnimator.frameFor(blend.cue(), state.age, blend.weight(), config.reducedMotion());
         if (frame.isIdentity()) {
             return; // weight rounded to nothing worth drawing, or the cue's activity has no Layer 3 pose (NORMAL/SPEAKING).
+        }
+
+        // P6 §4.3: showOnSelf, mute list, and max distance now apply to the pose
+        // too -- see class Javadoc's "showOnSelf" section for the P5a gap this
+        // closes. Inputs gathered exactly like CueScreenPanelRenderer.render
+        // gathers them for Layer 3's other half (the held panel): self via
+        // client.player, third-person via client.options.getPerspective()
+        // .isFirstPerson(), distance from the render state, name from the tab
+        // list. passesSharedRules, not shouldRender -- see class Javadoc.
+        MinecraftClient client = MinecraftClient.getInstance();
+        boolean isSelf = client.player != null && id.equals(client.player.getUuid());
+        boolean thirdPerson = !client.options.getPerspective().isFirstPerson();
+        double distance = Math.sqrt(state.squaredDistanceToCamera);
+        String playerName = socialcues$resolvePlayerName(client, id);
+        if (!BillboardCueVisibility.passesSharedRules(blend.cue(), isSelf, thirdPerson, distance, config, playerName)) {
+            return;
         }
 
         // PoseFrame's offsets are meant to be *added* to whatever vanilla (and any
@@ -174,6 +210,25 @@ public class PlayerEntityModelMixin {
         part.pitch += limb.pitch();
         part.yaw += limb.yaw();
         part.roll += limb.roll();
+    }
+
+    /**
+     * Same lookup, same fallback, as {@code CueBillboardRenderer}/{@code
+     * CueScreenPanelRenderer}'s own {@code resolvePlayerName} (this codebase's
+     * established pattern for this one-off glue: each render/mixin entry
+     * point keeps its own small copy rather than sharing a utility for a
+     * three-line lookup — see either of those classes for the identical
+     * shape).
+     */
+    private static String socialcues$resolvePlayerName(MinecraftClient client, UUID id) {
+        if (client.getNetworkHandler() == null) {
+            return "";
+        }
+        PlayerListEntry entry = client.getNetworkHandler().getPlayerListEntry(id);
+        if (entry == null || entry.getProfile() == null) {
+            return ""; // Not (yet) in the tab list; ClientConfigData.isMuted("") is simply never true.
+        }
+        return entry.getProfile().name(); // javap-verified (see CueBillboardRenderer/PlayerListHudMixin): name(), not getName().
     }
 
     private static float socialcues$lerp(float from, float to, float t) {

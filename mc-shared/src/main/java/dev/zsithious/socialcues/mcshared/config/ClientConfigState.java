@@ -5,6 +5,7 @@ import java.util.Objects;
 
 import dev.zsithious.socialcues.core.client.ClientConfigData;
 import dev.zsithious.socialcues.core.client.SharePrefsSource;
+import dev.zsithious.socialcues.mcshared.client.ClientCueCapture;
 
 import net.fabricmc.loader.api.FabricLoader;
 
@@ -20,10 +21,13 @@ import net.fabricmc.loader.api.FabricLoader;
  * {@link #get()}) touch.
  *
  * <p>Only ever touched from the client thread — loaded once during {@code
- * onInitializeClient}, and not reassigned again until a future P6 config UI
- * exists — matching the no-synchronization assumption every other piece of
- * this mod's Minecraft-side state already makes (see {@code
- * core.relay.CueRelay}'s Javadoc).
+ * onInitializeClient}, and reassigned by {@link #set} every time P6's Cloth
+ * config screen (or the {@code /socialcues config} fallback command) saves.
+ * Cloth screens themselves run on the render thread, so this is still the
+ * same no-synchronization assumption every other piece of this mod's
+ * Minecraft-side state already makes (see {@code core.relay.CueRelay}'s
+ * Javadoc) — {@link #set} being reachable at runtime now, not just in a
+ * future phase, does not change that.
  */
 public final class ClientConfigState {
 
@@ -53,10 +57,21 @@ public final class ClientConfigState {
         return current;
     }
 
-    /** For a future P6 config UI: applies {@code data} immediately and persists it to disk. */
+    /**
+     * P6's config screen's single "apply" step: {@code data} takes effect
+     * immediately (every renderer already reads {@link #get()} fresh every
+     * frame, and {@link #SHARE_PREFS} fresh every call) and is persisted to
+     * disk. Also pushes the new privacy state onto the wire right away —
+     * {@link ClientCueCapture#onConfigChanged()} — instead of leaving it to
+     * be picked up whenever {@code CueSampler}'s own rate limit next allows a
+     * send; see that method's Javadoc for why. This is the single choke point
+     * every config write goes through, on purpose, so nothing else ever has
+     * to remember to call {@code onConfigChanged()} itself.
+     */
     public static void set(ClientConfigData data) {
         current = Objects.requireNonNull(data, "data");
         ClientConfigIo.save(configFile(), current);
+        ClientCueCapture.onConfigChanged();
     }
 
     private static Path configFile() {

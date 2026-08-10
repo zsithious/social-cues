@@ -66,6 +66,14 @@ import net.minecraft.util.Identifier;
  * which is exactly the wrong behaviour for a layer whose only failure mode is
  * "nothing appears": a hand test could not tell a swallowed bug apart from a
  * player who genuinely had no cue.
+ *
+ * <p><b>{@code textOnly} (P6 §4.2) deliberately does not apply here</b> — see
+ * DESIGN.md §9's "P6 uygulama notu". This row's icon column is 8×8 px by
+ * construction, sitting immediately left of the ping icon (see the hook-point
+ * paragraph above); a translated label like "Typing…" does not fit that
+ * width and would overlap the player name it sits next to. {@code
+ * CueBillboardRenderer} is the only renderer that reads {@code
+ * config.textOnly()}.
  */
 @Mixin(value = PlayerListHud.class, priority = 2000)
 public class PlayerListHudMixin {

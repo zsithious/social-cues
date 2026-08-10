@@ -37,6 +37,26 @@ val fabricApiVersion = row["fabricApi"] as String
 // column already was.
 val modMenuVersion = row["modMenu"] as String?
 val clothConfigVersion = row["clothConfig"] as String?
+// Cloth's own library split: me.shedaniel.math.Rectangle and friends live in a
+// separate mod (cloth-basic-math), which Cloth ships as a nested jar and also
+// declares as a POM dependency. See the dependency block below for why this
+// row has to name it explicitly instead of inheriting it.
+val basicMathVersion = row["basicMath"] as String?
+
+// The three columns are one feature, so they are pinned together or not at all.
+// integrations/configui/ contains both the Cloth screen and the ModMenu
+// entrypoint that opens it, and it is compiled as a unit — pinning only some
+// of them would fail at compile time anyway, just with a stack of "cannot
+// find symbol" lines instead of this sentence.
+require((modMenuVersion == null) == (clothConfigVersion == null)
+        && (clothConfigVersion == null) == (basicMathVersion == null)) {
+    "versions.json row for $mcVersion pins only some of modMenu/clothConfig/basicMath " +
+        "(modMenu=$modMenuVersion, clothConfig=$clothConfigVersion, basicMath=$basicMathVersion). " +
+        "The P6 config UI needs all three or none — see integrations/configui/'s package-info."
+}
+
+/** DESIGN.md §14 P6: does this row build the config UI at all? See integrations/configui/'s package-info. */
+val configUiEnabled = clothConfigVersion != null
 val loomVersionForRow = row["loom"] as String
 val bucket = row["bucket"] as String
 val loaderVersion = providers.gradleProperty("loader_version").get()
@@ -109,6 +129,26 @@ dependencies {
     if (clothConfigVersion != null) {
         modImplementation("me.shedaniel.cloth:cloth-config-fabric:$clothConfigVersion") { isTransitive = false }
         include("me.shedaniel.cloth:cloth-config-fabric:$clothConfigVersion") { isTransitive = false }
+
+        // cloth-basic-math is the one transitive dependency `transitive = false`
+        // must NOT have cut. Cloth's public API is typed in terms of
+        // me.shedaniel.math.Rectangle (AbstractConfigEntry and the widget
+        // classes underneath it), so a Cloth on the classpath without it is a
+        // Cloth whose screen constructor dies with NoClassDefFoundError the
+        // moment it is opened. P6 hand test, 2026-08-10: ModMenu caught exactly
+        // that and greyed the button out with "The 'socialcues' mod config
+        // screen is not available because me/shedaniel/math/Rectangle is
+        // missing" — compilation had been perfectly happy, because our own
+        // source never names the class.
+        //
+        // Only `modImplementation`, deliberately not `include`: the *shipped*
+        // jar already carries it, because Cloth's own jar nests
+        // META-INF/jars/basic-math-<v>.jar and declares it in its `jars` list
+        // (Fabric resolves nested jars recursively). It is the dev classpath —
+        // which is built from the Gradle graph, not from nested jars — that
+        // this line exists to repair. Including it again would put a second
+        // copy of the same mod id in our jar for the loader to de-duplicate.
+        modImplementation("me.shedaniel.cloth:basic-math:$basicMathVersion") { isTransitive = false }
     }
 }
 
@@ -160,6 +200,15 @@ sourceSets {
         java {
             srcDir(rootProject.file("mc-shared/src/main/java"))
             srcDir(rootProject.file("adapters/$bucketDirName/src/main/java"))
+            // DESIGN.md §14 P6. Unlike the buckets this directory is not
+            // version-specific — Cloth's builder API is stable across 1.21.x —
+            // it is *dependency*-specific: it is the only source that imports
+            // Cloth/ModMenu, so it can only be compiled by a row that pins
+            // them. P7 turns this on for the other eleven rows by filling in
+            // their versions.json columns, not by forking the source.
+            if (configUiEnabled) {
+                srcDir(rootProject.file("integrations/configui/src/main/java"))
+            }
         }
         resources {
             srcDir(rootProject.file("mc-shared/src/main/resources"))
@@ -182,13 +231,45 @@ tasks.withType<JavaCompile>().configureEach {
     options.release.set(21)
 }
 
+// fabric.mod.json is one shared file for all twelve rows (mc-shared/src/main/
+// resources), but the P6 config UI only exists on rows that pin Cloth/ModMenu.
+// An entrypoint naming a class the jar does not contain is a hard crash at
+// load, so the two affected lists — and the Cloth dependency declaration that
+// goes with the bundled copy — are filled in per row here rather than written
+// once in the file. Same shape of problem the per-bucket socialcues.mixins.json
+// already had to solve in P4 (DESIGN.md §7), same solution: let the build
+// decide, never the shared file.
+val clientEntrypoints = buildString {
+    append("\"dev.zsithious.socialcues.mcshared.SocialCuesClientInitializer\"")
+    if (configUiEnabled) {
+        append(", \"dev.zsithious.socialcues.configui.ConfigUiClientEntrypoint\"")
+    }
+}
+val modMenuEntrypoints = if (configUiEnabled) "\"dev.zsithious.socialcues.configui.SocialCuesModMenu\"" else ""
+// Declared even though Cloth is bundled (jar-in-jar): the loader de-duplicates
+// nested copies across mods and keeps one, so what actually loads may be some
+// other mod's older Cloth. A `depends` line is what turns that into a clear
+// startup message instead of a NoSuchMethodError in our screen. Major version
+// only — Cloth's major tracks the Minecraft generation it targets.
+val extraDepends = if (configUiEnabled) {
+    ",\n    \"cloth-config\": \">=${clothConfigVersion!!.substringBefore('.')}\""
+} else {
+    ""
+}
+
 tasks.processResources {
     inputs.property("version", project.version)
     inputs.property("mcVersionRange", "~$mcVersion")
+    inputs.property("clientEntrypoints", clientEntrypoints)
+    inputs.property("modMenuEntrypoints", modMenuEntrypoints)
+    inputs.property("extraDepends", extraDepends)
     filesMatching("fabric.mod.json") {
         expand(
             "version" to project.version,
-            "mc_version_range" to "~$mcVersion"
+            "mc_version_range" to "~$mcVersion",
+            "client_entrypoints" to clientEntrypoints,
+            "modmenu_entrypoints" to modMenuEntrypoints,
+            "extra_depends" to extraDepends
         )
     }
 }
@@ -205,9 +286,12 @@ val checkNoTextAccess by tasks.registering {
     group = "verification"
     description = "Fails the build if mc-shared/adapter source reads chat/sign/book message content."
 
-    val sourceDirs = listOf(
+    val sourceDirs = listOfNotNull(
         rootProject.file("mc-shared/src"),
-        rootProject.file("adapters/$bucketDirName/src")
+        rootProject.file("adapters/$bucketDirName/src"),
+        // The config UI is client source like any other and gets the same
+        // guarantee — a text field on a config screen is still a text field.
+        rootProject.file("integrations/configui/src").takeIf { configUiEnabled }
     )
 
     doLast {

@@ -14,15 +14,14 @@
     "main": [
       "dev.zsithious.socialcues.mcshared.SocialCuesInitializer"
     ],
-    "client": [
-      "dev.zsithious.socialcues.mcshared.SocialCuesClientInitializer"
-    ]
+    "client": [${client_entrypoints}],
+    "modmenu": [${modmenu_entrypoints}]
   },
   "depends": {
     "fabricloader": ">=0.16.0",
     "minecraft": "${mc_version_range}",
     "java": ">=21",
-    "fabric-api": "*"
+    "fabric-api": "*"${extra_depends}
   },
   "suggests": {
     "modmenu": "*"

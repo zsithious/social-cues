@@ -39,6 +39,7 @@ class ClientConfigDataTest {
         boolean showOnSelf = false;
         boolean reducedMotion = false;
         boolean textOnly = false;
+        boolean shareNothing = false;
         boolean shareTyping = true;
         boolean shareScreens = true;
         boolean shareScreenDetail = true;
@@ -58,6 +59,11 @@ class ClientConfigDataTest {
 
         Builder maxDistanceField(double v) {
             maxDistance = v;
+            return this;
+        }
+
+        Builder shareNothingField(boolean v) {
+            shareNothing = v;
             return this;
         }
 
@@ -93,8 +99,8 @@ class ClientConfigDataTest {
 
         ClientConfigData build() {
             return new ClientConfigData(layer1, layer2, layer3, scale, opacity, maxDistance, showOnSelf,
-                    reducedMotion, textOnly, shareTyping, shareScreens, shareScreenDetail, shareIdle, shareVoice,
-                    mutedPlayers);
+                    reducedMotion, textOnly, shareNothing, shareTyping, shareScreens, shareScreenDetail, shareIdle,
+                    shareVoice, mutedPlayers);
         }
     }
 
@@ -111,6 +117,7 @@ class ClientConfigDataTest {
         assertFalse(defaults.showOnSelf());
         assertFalse(defaults.reducedMotion());
         assertFalse(defaults.textOnly());
+        assertFalse(defaults.shareNothing());
         assertTrue(defaults.shareTyping());
         assertTrue(defaults.shareScreens());
         assertTrue(defaults.shareScreenDetail());
@@ -246,5 +253,55 @@ class ClientConfigDataTest {
         ClientConfigData data = ClientConfigData.defaults();
         SharePrefsSource asSource = data;
         assertEquals(data.prefBits(), asSource.prefBits());
+    }
+
+    // ------------------------------------------------------- shareNothing (P6 §3)
+
+    @Test
+    void shareNothingSuspendsTheShareFlagsWithoutErasingThem() {
+        // The point of the rule, and the reason it is enforced in prefBits()
+        // instead of the compact constructor: a master switch the user turns
+        // back off must give them back the five choices they made, not five
+        // silently-off switches. Persisting the erasure would make "share
+        // nothing" a one-way door that looks like data loss.
+        ClientConfigData data = builder()
+                .shareNothingField(true)
+                .shareTypingField(true).shareScreensField(true).shareScreenDetailField(true)
+                .shareIdleField(true).shareVoiceField(true)
+                .build();
+        assertTrue(data.shareTyping());
+        assertTrue(data.shareScreens());
+        assertTrue(data.shareScreenDetail());
+        assertTrue(data.shareIdle());
+        assertTrue(data.shareVoice());
+        assertEquals(PolicyBits.NONE, data.prefBits(), "nothing may leave this machine while shareNothing is set");
+    }
+
+    @Test
+    void shareNothingFalseLeavesEveryShareFlagAsRequested() {
+        ClientConfigData data = builder()
+                .shareNothingField(false)
+                .shareTypingField(true).shareScreensField(true).shareScreenDetailField(true)
+                .shareIdleField(true).shareVoiceField(true)
+                .build();
+        assertTrue(data.shareTyping());
+        assertTrue(data.shareScreens());
+        assertTrue(data.shareScreenDetail());
+        assertTrue(data.shareIdle());
+        assertTrue(data.shareVoice());
+    }
+
+    @Test
+    void shareNothingPrefBitsIsNoneIncludingGlobalTier() {
+        // Unlike prefBitsReflectsEachToggleIndependently's "all five signals off"
+        // case (which still carries GLOBAL_TIER, see that test), shareNothing
+        // drops GLOBAL_TIER too -- see prefBits()'s own Javadoc for why opting out
+        // of every signal has to mean opting out of the coarse tier as well.
+        ClientConfigData data = builder()
+                .shareNothingField(true)
+                .shareTypingField(true).shareScreensField(true).shareScreenDetailField(true)
+                .shareIdleField(true).shareVoiceField(true)
+                .build();
+        assertEquals(PolicyBits.NONE, data.prefBits());
     }
 }

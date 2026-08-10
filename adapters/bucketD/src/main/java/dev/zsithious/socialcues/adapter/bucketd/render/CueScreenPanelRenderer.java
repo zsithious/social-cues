@@ -141,19 +141,23 @@ import net.minecraft.util.math.RotationAxis;
  * already-tilted panel frame.
  *
  * <p><b>Visibility rules are reused, not re-implemented</b> — {@link
- * BillboardCueVisibility#shouldRender} covers mute list, {@code
+ * BillboardCueVisibility#passesSharedRules} covers mute list, {@code
  * showOnSelf}/third-person, {@code MUTED_SELF}, and max distance, exactly
- * the same as Layer 1. One consequence worth being explicit about: that
- * method also checks {@code config.layer1Enabled()} internally (it has no
- * separate parameter for "which layer is asking"), so turning Layer 1 off
- * hides this panel too, on top of the {@code layer3Enabled} gate this class
- * checks itself. That is a side effect of reuse, not a deliberate design
- * decision — DESIGN.md doesn't say whether the panel should survive Layer 1
- * being switched off, and writing a second copy of the mute/self/distance
- * rules to avoid this one coupling would violate the "don't duplicate the
- * rules" instruction this task was given. {@code F1} ({@code
- * client.options.hudHidden}) is checked directly here instead, mirroring
- * {@link CueBillboardRenderer#render} — it was never part of {@code
+ * the same as Layer 1. P6 §4.4: this class used to call {@link
+ * BillboardCueVisibility#shouldRender} instead, which folds {@code
+ * config.layer1Enabled()} into the same rules with no separate parameter for
+ * "which layer is asking" — so turning Layer 1 off silently hid this panel
+ * too, on top of the {@code layer3Enabled} gate this class already checks
+ * itself, a coupling nobody asked for and DESIGN.md never intended (Katman 1
+ * and Katman 3 are documented as "birbirinden bağımsız açılıp kapanabilir").
+ * {@link BillboardCueVisibility#passesSharedRules} is the fix: the same rules
+ * with the layer-1-specific gate split out, so this class's own {@code
+ * layer3Enabled} check above is now the only layer toggle that can hide this
+ * panel — see that method's Javadoc and {@code BillboardCueVisibilityTest}'s
+ * {@code passesSharedRulesIgnoresLayer1EnabledTheRegressionThatMotivatedTheSplit}
+ * for the regression this closes. {@code F1} ({@code client.options
+ * .hudHidden}) is still checked directly here, mirroring {@link
+ * CueBillboardRenderer#render} — it was never part of {@code
  * BillboardCueVisibility} to begin with (see that class's Javadoc), so this
  * is not a duplicate, just the same one-line check every entry point into
  * this hook already needs to make for itself.
@@ -271,7 +275,10 @@ public final class CueScreenPanelRenderer {
         }
         PoseBlend.Blend blend = blendOpt.get();
 
-        PoseFrame frame = PoseAnimator.frameFor(blend.cue(), state.age, blend.weight());
+        // P6 §4.1: reducedMotion is the viewer's own setting (mcshared.config.
+        // ClientConfigState), passed in rather than read inside core -- see
+        // PoseAnimator's own Javadoc.
+        PoseFrame frame = PoseAnimator.frameFor(blend.cue(), state.age, blend.weight(), config.reducedMotion());
         if (!frame.hasScreen()) {
             return; // Task requirement: gated on frame.hasScreen() -- AFK/NORMAL/SPEAKING never have a panel.
         }
@@ -285,9 +292,9 @@ public final class CueScreenPanelRenderer {
         double distance = Math.sqrt(state.squaredDistanceToCamera);
         String playerName = resolvePlayerName(client, id);
 
-        // Reused wholesale, not re-implemented -- see class Javadoc for the one
-        // consequence worth knowing (this also enforces config.layer1Enabled()).
-        if (!BillboardCueVisibility.shouldRender(blend.cue(), isSelf, thirdPerson, distance, config, playerName)) {
+        // P6 §4.4: passesSharedRules, not shouldRender -- see class Javadoc for why
+        // (shouldRender would fold Layer 1's own layer1Enabled gate in here too).
+        if (!BillboardCueVisibility.passesSharedRules(blend.cue(), isSelf, thirdPerson, distance, config, playerName)) {
             return;
         }
 
@@ -437,8 +444,12 @@ public final class CueScreenPanelRenderer {
         }
 
         float seconds = state.age / TICKS_PER_SECOND;
-        List<String> lines = FakeChatStream.lines(cue, seconds);
-        int caretColumn = FakeChatStream.caretColumn(cue, seconds);
+        // P6 §4.1: same reducedMotion source as the pose frame above; read fresh
+        // here rather than threaded down from render() (config is not otherwise
+        // passed this deep into the call chain).
+        boolean reducedMotion = ClientConfigState.get().reducedMotion();
+        List<String> lines = FakeChatStream.lines(cue, seconds, reducedMotion);
+        int caretColumn = FakeChatStream.caretColumn(cue, seconds, reducedMotion);
 
         // The blinking caret is this renderer's own UI chrome, not part of
         // FakeChatStream's simulated content (whose alphabet is deliberately
@@ -448,7 +459,7 @@ public final class CueScreenPanelRenderer {
         // the actual draw loop see the exact same (caret-included) strings.
         int lastIndex = lines.size() - 1;
         String[] displayLines = lines.toArray(new String[0]);
-        if (blinkOn(seconds)) {
+        if (blinkOn(seconds, reducedMotion)) {
             String lastLine = displayLines[lastIndex];
             int column = Math.min(caretColumn, lastLine.length());
             displayLines[lastIndex] = lastLine.substring(0, column) + CARET_GLYPH;
@@ -513,7 +524,25 @@ public final class CueScreenPanelRenderer {
         matrices.pop();
     }
 
-    private static boolean blinkOn(float seconds) {
+    /**
+     * P6 §4.1 / B5 hand-off note: the blinking caret is this renderer's own UI
+     * chrome (see {@link #drawChatText}'s comment above its call site), not
+     * part of {@link FakeChatStream}'s simulated content — so WP-A's {@code
+     * core}-side {@code reducedMotion} freeze (every time-varying term in
+     * {@code CueIconMotion}/{@code PoseAnimator}/{@code FakeChatStream} pinned
+     * to a steady value) never reached it, and it kept blinking under
+     * accessibility mode until now. "Always on" was chosen over "always off":
+     * DESIGN.md §9's "animasyon yok, sadece statik ikon" asks for a steady
+     * *something*, not nothing, and a caret that never appears reads as a
+     * missing-cursor rendering bug rather than as "this element is present
+     * and simply not animating" — the same reasoning {@code
+     * CueIconMotion}/{@code PoseAnimator} already apply by holding a pose at
+     * its steady target instead of blending it away.
+     */
+    private static boolean blinkOn(float seconds, boolean reducedMotion) {
+        if (reducedMotion) {
+            return true;
+        }
         return ((int) Math.floor(seconds * CARET_BLINK_HZ)) % 2 == 0;
     }
 

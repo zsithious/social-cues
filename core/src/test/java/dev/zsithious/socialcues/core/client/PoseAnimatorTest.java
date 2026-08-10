@@ -39,9 +39,9 @@ class PoseAnimatorTest {
         UUID id = UUID.randomUUID();
         for (Activity activity : Activity.values()) {
             PlayerCue cue = cue(id, activity, 128, CueFlags.SLEEPY);
-            assertEquals(PoseFrame.NONE, PoseAnimator.frameFor(cue, 37f, 0f));
+            assertEquals(PoseFrame.NONE, PoseAnimator.frameFor(cue, 37f, 0f, false));
             // Negative weight clamps to 0 too (frameFor's own documented contract).
-            assertEquals(PoseFrame.NONE, PoseAnimator.frameFor(cue, 37f, -5f));
+            assertEquals(PoseFrame.NONE, PoseAnimator.frameFor(cue, 37f, -5f, false));
         }
     }
 
@@ -51,7 +51,7 @@ class PoseAnimatorTest {
         for (Activity activity : new Activity[] {Activity.NORMAL, Activity.SPEAKING}) {
             PlayerCue cue = cue(id, activity, 255, 0);
             for (float w : new float[] {0f, 0.001f, 0.25f, 0.5f, 1f, 2f}) {
-                assertEquals(PoseFrame.NONE, PoseAnimator.frameFor(cue, 123.4f, w),
+                assertEquals(PoseFrame.NONE, PoseAnimator.frameFor(cue, 123.4f, w, false),
                         "activity=" + activity + " weight=" + w);
             }
         }
@@ -63,13 +63,13 @@ class PoseAnimatorTest {
         assertTrue(PoseFrame.NONE.isIdentity());
 
         PlayerCue typing = cue(id, Activity.TYPING_CHAT, 200, 0);
-        assertTrue(PoseAnimator.frameFor(typing, 10f, 0f).isIdentity());
+        assertTrue(PoseAnimator.frameFor(typing, 10f, 0f, false).isIdentity());
         // A cue that genuinely has a pose at weight > 0 must NOT read as identity
         // (otherwise a renderer would wrongly skip drawing it).
-        assertFalse(PoseAnimator.frameFor(typing, 10f, 1f).isIdentity());
+        assertFalse(PoseAnimator.frameFor(typing, 10f, 1f, false).isIdentity());
 
         PlayerCue afk = cue(id, Activity.AFK, 0, 0);
-        assertFalse(PoseAnimator.frameFor(afk, 10f, 1f).isIdentity());
+        assertFalse(PoseAnimator.frameFor(afk, 10f, 1f, false).isIdentity());
     }
 
     // ------------------------------------------------------------------ scaling
@@ -88,8 +88,8 @@ class PoseAnimatorTest {
         float w2 = 1.0f;
         double ratio = w2 / w1;
 
-        PoseFrame f1 = PoseAnimator.frameFor(cue, ageTicks, w1);
-        PoseFrame f2 = PoseAnimator.frameFor(cue, ageTicks, w2);
+        PoseFrame f1 = PoseAnimator.frameFor(cue, ageTicks, w1, false);
+        PoseFrame f2 = PoseAnimator.frameFor(cue, ageTicks, w2, false);
 
         assertLimbScaled(f1.rightArm(), f2.rightArm(), ratio, "rightArm");
         assertLimbScaled(f1.leftArm(), f2.leftArm(), ratio, "leftArm");
@@ -120,13 +120,13 @@ class PoseAnimatorTest {
         PlayerCue inScreen = cue(id, Activity.IN_SCREEN, 0, 0);
         float ageTicks = 17f;
 
-        float typingRiseLow = PoseAnimator.frameFor(typing, ageTicks, 0.2f).screenRise();
-        float typingRiseHigh = PoseAnimator.frameFor(typing, ageTicks, 1f).screenRise();
+        float typingRiseLow = PoseAnimator.frameFor(typing, ageTicks, 0.2f, false).screenRise();
+        float typingRiseHigh = PoseAnimator.frameFor(typing, ageTicks, 1f, false).screenRise();
         assertEquals(typingRiseLow, typingRiseHigh, 1e-6f,
                 "screenRise is a fixed height, not something weight should fade");
 
-        float screenRiseLow = PoseAnimator.frameFor(inScreen, ageTicks, 0.2f).screenRise();
-        float screenRiseHigh = PoseAnimator.frameFor(inScreen, ageTicks, 1f).screenRise();
+        float screenRiseLow = PoseAnimator.frameFor(inScreen, ageTicks, 0.2f, false).screenRise();
+        float screenRiseHigh = PoseAnimator.frameFor(inScreen, ageTicks, 1f, false).screenRise();
         assertEquals(screenRiseLow, screenRiseHigh, 1e-6f);
 
         // And it's genuinely nonzero whenever there's a screen at all -- a panel
@@ -142,8 +142,8 @@ class PoseAnimatorTest {
         UUID id = UUID.randomUUID();
         for (Activity activity : Activity.values()) {
             PlayerCue cue = cue(id, activity, 173, CueFlags.SLEEPY);
-            PoseFrame first = PoseAnimator.frameFor(cue, 91.5f, 0.77f);
-            PoseFrame second = PoseAnimator.frameFor(cue, 91.5f, 0.77f);
+            PoseFrame first = PoseAnimator.frameFor(cue, 91.5f, 0.77f, false);
+            PoseFrame second = PoseAnimator.frameFor(cue, 91.5f, 0.77f, false);
             assertEquals(first, second, "activity=" + activity + " was not deterministic");
         }
     }
@@ -156,12 +156,12 @@ class PoseAnimatorTest {
         // cue.id().hashCode() (the "seed" in PoseAnimator); two different players
         // must not move identically (class Javadoc: "iki kişinin yan yana yazması
         // kilitli adım olmasın").
-        PoseFrame typingA = PoseAnimator.frameFor(cue(a, Activity.TYPING_CHAT, 210, 0), 50f, 1f);
-        PoseFrame typingB = PoseAnimator.frameFor(cue(b, Activity.TYPING_CHAT, 210, 0), 50f, 1f);
+        PoseFrame typingA = PoseAnimator.frameFor(cue(a, Activity.TYPING_CHAT, 210, 0), 50f, 1f, false);
+        PoseFrame typingB = PoseAnimator.frameFor(cue(b, Activity.TYPING_CHAT, 210, 0), 50f, 1f, false);
         assertNotEquals(typingA, typingB);
 
-        PoseFrame idleA = PoseAnimator.frameFor(cue(a, Activity.AFK, 0, 0), 50f, 1f);
-        PoseFrame idleB = PoseAnimator.frameFor(cue(b, Activity.AFK, 0, 0), 50f, 1f);
+        PoseFrame idleA = PoseAnimator.frameFor(cue(a, Activity.AFK, 0, 0), 50f, 1f, false);
+        PoseFrame idleB = PoseAnimator.frameFor(cue(b, Activity.AFK, 0, 0), 50f, 1f, false);
         assertNotEquals(idleA, idleB);
     }
 
@@ -179,12 +179,12 @@ class PoseAnimatorTest {
         PlayerCue typing = cue(id, Activity.TYPING_CHAT, 128, 0);
         PlayerCue inScreen = cue(id, Activity.IN_SCREEN, 0, 0);
 
-        assertEquals(1f, PoseAnimator.frameFor(typing, 10f, 0.5f).headAim(), 1e-6f);
-        assertEquals(1f, PoseAnimator.frameFor(inScreen, 10f, 0.5f).headAim(), 1e-6f);
+        assertEquals(1f, PoseAnimator.frameFor(typing, 10f, 0.5f, false).headAim(), 1e-6f);
+        assertEquals(1f, PoseAnimator.frameFor(inScreen, 10f, 0.5f, false).headAim(), 1e-6f);
         // And it is not saturated yet just below half weight -- confirms the
         // 2x rule rather than some other curve that also happens to hit 1 at 0.5.
-        assertEquals(0.8f, PoseAnimator.frameFor(typing, 10f, 0.4f).headAim(), 1e-6f);
-        assertEquals(0.8f, PoseAnimator.frameFor(inScreen, 10f, 0.4f).headAim(), 1e-6f);
+        assertEquals(0.8f, PoseAnimator.frameFor(typing, 10f, 0.4f, false).headAim(), 1e-6f);
+        assertEquals(0.8f, PoseAnimator.frameFor(inScreen, 10f, 0.4f, false).headAim(), 1e-6f);
     }
 
     @Test
@@ -193,13 +193,13 @@ class PoseAnimatorTest {
         assertEquals(0f, PoseFrame.NONE.headAim(), "PoseFrame.NONE must carry no head-aim target");
 
         PlayerCue typing = cue(id, Activity.TYPING_CHAT, 128, 0);
-        assertEquals(0f, PoseAnimator.frameFor(typing, 10f, 0f).headAim());
+        assertEquals(0f, PoseAnimator.frameFor(typing, 10f, 0f, false).headAim());
 
         // Idle deliberately keeps the old additive-only droop (DESIGN.md §7 P5
         // hand-test fix's own brief: "idle() (AFK): headAim kullanma") -- it
         // must never set a head-aim target, at any weight.
         PlayerCue idle = cue(id, Activity.AFK, 0, 0);
-        assertEquals(0f, PoseAnimator.frameFor(idle, 10f, 1f).headAim(),
+        assertEquals(0f, PoseAnimator.frameFor(idle, 10f, 1f, false).headAim(),
                 "idle must not use headAim, only the additive droop");
     }
 
@@ -209,11 +209,11 @@ class PoseAnimatorTest {
         PlayerCue typing = cue(id, Activity.TYPING_CHAT, 128, 0);
         PlayerCue inScreen = cue(id, Activity.IN_SCREEN, 0, 0);
 
-        PoseFrame typingFrame = PoseAnimator.frameFor(typing, 10f, 1f);
+        PoseFrame typingFrame = PoseAnimator.frameFor(typing, 10f, 1f, false);
         assertEquals(0.42f, typingFrame.headAimPitch(), 1e-6f);
         assertEquals(0f, typingFrame.headAimYaw(), 1e-6f);
 
-        PoseFrame inScreenFrame = PoseAnimator.frameFor(inScreen, 10f, 1f);
+        PoseFrame inScreenFrame = PoseAnimator.frameFor(inScreen, 10f, 1f, false);
         assertEquals(0.32f, inScreenFrame.headAimPitch(), 1e-6f);
         assertEquals(0f, inScreenFrame.headAimYaw(), 1e-6f);
     }
@@ -235,7 +235,7 @@ class PoseAnimatorTest {
         PlayerCue cue = cue(id, Activity.TYPING_CHAT, 255, 0);
 
         for (float seconds = 0f; seconds <= 8f; seconds += 0.05f) {
-            PoseFrame frame = PoseAnimator.frameFor(cue, seconds * TICKS_PER_SECOND, 1f);
+            PoseFrame frame = PoseAnimator.frameFor(cue, seconds * TICKS_PER_SECOND, 1f, false);
             assertTrue(frame.rightArm().yaw() < 0f,
                     "expected right arm yaw < 0 (tucked in) at t=" + seconds + ", was " + frame.rightArm().yaw());
             assertTrue(frame.leftArm().yaw() > 0f,
@@ -247,7 +247,7 @@ class PoseAnimatorTest {
     void typingHasAScreen() {
         UUID id = UUID.randomUUID();
         PlayerCue cue = cue(id, Activity.TYPING_CHAT, 128, 0);
-        assertTrue(PoseAnimator.frameFor(cue, 12f, 1f).hasScreen());
+        assertTrue(PoseAnimator.frameFor(cue, 12f, 1f, false).hasScreen());
     }
 
     /**
@@ -268,12 +268,12 @@ class PoseAnimatorTest {
         float maxHoldPitch = Float.NEGATIVE_INFINITY;
         for (float seconds = 0f; seconds <= 6f; seconds += 0.02f) {
             float ageTicks = seconds * TICKS_PER_SECOND;
-            float typingPitch = PoseAnimator.frameFor(typing, ageTicks, 1f).rightArm().pitch();
+            float typingPitch = PoseAnimator.frameFor(typing, ageTicks, 1f, false).rightArm().pitch();
             minTypingPitch = Math.min(minTypingPitch, typingPitch);
 
             // The holding arm is IN_SCREEN's left arm -- PoseAnimator.inScreen()'s own
             // Javadoc: "The right arm works, the left holds."
-            float holdPitch = PoseAnimator.frameFor(inScreen, ageTicks, 1f).leftArm().pitch();
+            float holdPitch = PoseAnimator.frameFor(inScreen, ageTicks, 1f, false).leftArm().pitch();
             maxHoldPitch = Math.max(maxHoldPitch, holdPitch);
         }
 
@@ -299,7 +299,7 @@ class PoseAnimatorTest {
         Float previousLeft = null;
         boolean sawSameDirectionMove = false;
         for (float seconds = 0f; seconds <= 12f && !sawSameDirectionMove; seconds += 0.03f) {
-            PoseFrame frame = PoseAnimator.frameFor(cue, seconds * TICKS_PER_SECOND, 1f);
+            PoseFrame frame = PoseAnimator.frameFor(cue, seconds * TICKS_PER_SECOND, 1f, false);
             float right = frame.rightArm().pitch();
             float left = frame.leftArm().pitch();
             if (previousRight != null) {
@@ -339,11 +339,11 @@ class PoseAnimatorTest {
     }
 
     private static int countLocalMaxima(PlayerCue cue, float windowSeconds, float stepSeconds) {
-        float previous = PoseAnimator.frameFor(cue, 0f, 1f).rightArm().pitch();
-        float current = PoseAnimator.frameFor(cue, stepSeconds * TICKS_PER_SECOND, 1f).rightArm().pitch();
+        float previous = PoseAnimator.frameFor(cue, 0f, 1f, false).rightArm().pitch();
+        float current = PoseAnimator.frameFor(cue, stepSeconds * TICKS_PER_SECOND, 1f, false).rightArm().pitch();
         int peaks = 0;
         for (float seconds = 2 * stepSeconds; seconds <= windowSeconds; seconds += stepSeconds) {
-            float next = PoseAnimator.frameFor(cue, seconds * TICKS_PER_SECOND, 1f).rightArm().pitch();
+            float next = PoseAnimator.frameFor(cue, seconds * TICKS_PER_SECOND, 1f, false).rightArm().pitch();
             if (current > previous && current > next) {
                 peaks++;
             }
@@ -406,10 +406,10 @@ class PoseAnimatorTest {
 
     private static List<Float> peakTimes(PlayerCue cue, float windowSeconds, float stepSeconds, FloatExtractor extractor) {
         List<Float> peaks = new ArrayList<>();
-        float previous = extractor.apply(PoseAnimator.frameFor(cue, 0f, 1f));
-        float current = extractor.apply(PoseAnimator.frameFor(cue, stepSeconds * TICKS_PER_SECOND, 1f));
+        float previous = extractor.apply(PoseAnimator.frameFor(cue, 0f, 1f, false));
+        float current = extractor.apply(PoseAnimator.frameFor(cue, stepSeconds * TICKS_PER_SECOND, 1f, false));
         for (float seconds = 2 * stepSeconds; seconds <= windowSeconds; seconds += stepSeconds) {
-            float next = extractor.apply(PoseAnimator.frameFor(cue, seconds * TICKS_PER_SECOND, 1f));
+            float next = extractor.apply(PoseAnimator.frameFor(cue, seconds * TICKS_PER_SECOND, 1f, false));
             if (current > previous && current > next) {
                 peaks.add(seconds - stepSeconds); // the sample time `current` was taken at
             }
@@ -426,10 +426,10 @@ class PoseAnimatorTest {
         float ageTicks = 42.5f;
         float weight = 0.66f;
 
-        PoseFrame chat = PoseAnimator.frameFor(cue(id, Activity.TYPING_CHAT, intensity, 0), ageTicks, weight);
-        PoseFrame command = PoseAnimator.frameFor(cue(id, Activity.TYPING_COMMAND, intensity, 0), ageTicks, weight);
-        PoseFrame sign = PoseAnimator.frameFor(cue(id, Activity.TYPING_SIGN, intensity, 0), ageTicks, weight);
-        PoseFrame book = PoseAnimator.frameFor(cue(id, Activity.TYPING_BOOK, intensity, 0), ageTicks, weight);
+        PoseFrame chat = PoseAnimator.frameFor(cue(id, Activity.TYPING_CHAT, intensity, 0), ageTicks, weight, false);
+        PoseFrame command = PoseAnimator.frameFor(cue(id, Activity.TYPING_COMMAND, intensity, 0), ageTicks, weight, false);
+        PoseFrame sign = PoseAnimator.frameFor(cue(id, Activity.TYPING_SIGN, intensity, 0), ageTicks, weight, false);
+        PoseFrame book = PoseAnimator.frameFor(cue(id, Activity.TYPING_BOOK, intensity, 0), ageTicks, weight, false);
 
         assertEquals(chat, command);
         assertEquals(chat, sign);
@@ -442,7 +442,7 @@ class PoseAnimatorTest {
     void inScreenHasAScreen() {
         UUID id = UUID.randomUUID();
         PlayerCue cue = cue(id, Activity.IN_SCREEN, 0, 0);
-        assertTrue(PoseAnimator.frameFor(cue, 5f, 1f).hasScreen());
+        assertTrue(PoseAnimator.frameFor(cue, 5f, 1f, false).hasScreen());
     }
 
     @Test
@@ -453,7 +453,7 @@ class PoseAnimatorTest {
         for (float w : new float[] {0.1f, 0.5f, 1f}) {
             // ageTicks == 0 puts both wobble sines at their zero crossing, leaving
             // just the resting base tilt -- guaranteed non-zero for any w > 0.
-            PoseFrame frame = PoseAnimator.frameFor(cue, 0f, w);
+            PoseFrame frame = PoseAnimator.frameFor(cue, 0f, w, false);
             assertEquals(w, frame.screenWeight(), 1e-6f);
             assertNotEquals(0f, frame.screenTilt(), 1e-6f);
         }
@@ -471,7 +471,7 @@ class PoseAnimatorTest {
         PlayerCue cue = cue(id, Activity.IN_SCREEN, 0, 0);
 
         for (float seconds = 0f; seconds <= 3f; seconds += 0.5f) {
-            PoseFrame frame = PoseAnimator.frameFor(cue, seconds * TICKS_PER_SECOND, 1f);
+            PoseFrame frame = PoseAnimator.frameFor(cue, seconds * TICKS_PER_SECOND, 1f, false);
             float sumOfPitches = frame.rightArm().pitch() + frame.leftArm().pitch();
             // A mirror pose would have right.pitch() == -left.pitch(), i.e. sumOfPitches
             // == 0. The work/hold poses sit at entirely different base angles, so this
@@ -501,7 +501,7 @@ class PoseAnimatorTest {
         int workNegative = 0;
         int workTotal = 0;
         for (float seconds = 0f; seconds <= 60f; seconds += 0.1f) {
-            PoseFrame frame = PoseAnimator.frameFor(cue, seconds * TICKS_PER_SECOND, 1f);
+            PoseFrame frame = PoseAnimator.frameFor(cue, seconds * TICKS_PER_SECOND, 1f, false);
             assertTrue(frame.leftArm().roll() > 0f,
                     "expected the holding (left) arm's roll > 0 (tucked in) at t=" + seconds
                             + ", was " + frame.leftArm().roll());
@@ -531,7 +531,7 @@ class PoseAnimatorTest {
         float minWork = Float.POSITIVE_INFINITY;
         float maxWork = Float.NEGATIVE_INFINITY;
         for (float seconds = 0f; seconds <= 15f; seconds += 0.05f) {
-            PoseFrame frame = PoseAnimator.frameFor(cue, seconds * TICKS_PER_SECOND, 1f);
+            PoseFrame frame = PoseAnimator.frameFor(cue, seconds * TICKS_PER_SECOND, 1f, false);
             float hold = frame.leftArm().pitch();
             float work = frame.rightArm().pitch();
             minHold = Math.min(minHold, hold);
@@ -554,7 +554,7 @@ class PoseAnimatorTest {
         UUID id = UUID.randomUUID();
         for (int flags : new int[] {0, CueFlags.SLEEPY}) {
             PlayerCue cue = cue(id, Activity.AFK, 0, flags);
-            assertFalse(PoseAnimator.frameFor(cue, 9f, 1f).hasScreen());
+            assertFalse(PoseAnimator.frameFor(cue, 9f, 1f, false).hasScreen());
         }
     }
 
@@ -566,7 +566,7 @@ class PoseAnimatorTest {
 
         boolean sawNonZeroBody = false;
         for (float seconds = 0f; seconds <= 10f; seconds += 0.1f) {
-            Limb body = PoseAnimator.frameFor(cue, seconds * TICKS_PER_SECOND, 1f).body();
+            Limb body = PoseAnimator.frameFor(cue, seconds * TICKS_PER_SECOND, 1f, false).body();
             if (!body.isZero()) {
                 sawNonZeroBody = true;
                 break;
@@ -583,8 +583,8 @@ class PoseAnimatorTest {
 
         // ageTicks == 0 puts the nod/sway wobble at its own zero crossing,
         // isolating the pure droop constant each branch adds.
-        float plainPitch = PoseAnimator.frameFor(plain, 0f, 1f).head().pitch();
-        float sleepyPitch = PoseAnimator.frameFor(sleepy, 0f, 1f).head().pitch();
+        float plainPitch = PoseAnimator.frameFor(plain, 0f, 1f, false).head().pitch();
+        float sleepyPitch = PoseAnimator.frameFor(sleepy, 0f, 1f, false).head().pitch();
 
         assertTrue(sleepyPitch > plainPitch,
                 "expected SLEEPY to droop further: plain=" + plainPitch + " sleepy=" + sleepyPitch);
@@ -612,16 +612,133 @@ class PoseAnimatorTest {
                         + " body=" + bodyPeaks + ")");
     }
 
+    // ------------------------------------------------- reducedMotion (P6 §4.1)
+
+    /**
+     * "Every time-varying term is removed" — the core contract. Sampled at two
+     * {@code ageTicks} far enough apart that any surviving oscillation term
+     * (drift/tap/reach for typing, wobble/reach for in-screen, nod/sway/loll
+     * for idle) would almost certainly show up as a difference; under
+     * {@code reducedMotion} there must be none.
+     */
+    @Test
+    void reducedMotionProducesAnIdenticalFrameAtDifferentAgeTicksForEveryPosedActivity() {
+        UUID id = UUID.randomUUID();
+        PlayerCue typing = cue(id, Activity.TYPING_CHAT, 200, 0);
+        PlayerCue inScreen = cue(id, Activity.IN_SCREEN, 0, 0);
+        PlayerCue afk = cue(id, Activity.AFK, 0, 0);
+        PlayerCue sleepy = cue(id, Activity.AFK, 0, CueFlags.SLEEPY);
+
+        for (PlayerCue c : new PlayerCue[] {typing, inScreen, afk, sleepy}) {
+            PoseFrame early = PoseAnimator.frameFor(c, 5f, 1f, true);
+            PoseFrame late = PoseAnimator.frameFor(c, 9137f, 1f, true);
+            assertEquals(early, late, "activity=" + c.activity() + " flags=" + c.flags()
+                    + " was not stable under reducedMotion");
+            // Not just stable at PoseFrame.NONE -- it must still be a visible pose.
+            assertFalse(early.isIdentity());
+        }
+    }
+
+    /**
+     * "State changes still happen" — reducedMotion must not collapse every
+     * activity to the same held frame; the steady pose it holds still has to
+     * differ by what the player is actually doing.
+     */
+    @Test
+    void reducedMotionFramesStillDifferByActivity() {
+        UUID id = UUID.randomUUID();
+        PoseFrame typing = PoseAnimator.frameFor(cue(id, Activity.TYPING_CHAT, 128, 0), 40f, 1f, true);
+        PoseFrame inScreen = PoseAnimator.frameFor(cue(id, Activity.IN_SCREEN, 0, 0), 40f, 1f, true);
+        PoseFrame afk = PoseAnimator.frameFor(cue(id, Activity.AFK, 0, 0), 40f, 1f, true);
+
+        assertNotEquals(typing, inScreen);
+        assertNotEquals(typing, afk);
+        assertNotEquals(inScreen, afk);
+    }
+
+    /**
+     * The held reducedMotion frame must be the same pose the full animation
+     * rests at between taps, not some other angle — same regression check as
+     * {@link #typingHandsTuckInwardRightArmYawNegativeLeftArmYawPositive}, just
+     * confirming it still holds at the one steady instant reducedMotion keeps.
+     */
+    @Test
+    void reducedMotionTypingStillTucksHandsInward() {
+        UUID id = UUID.randomUUID();
+        PoseFrame frame = PoseAnimator.frameFor(cue(id, Activity.TYPING_CHAT, 255, 0), 77f, 1f, true);
+        assertTrue(frame.rightArm().yaw() < 0f, "expected right arm yaw < 0 (tucked in), was " + frame.rightArm().yaw());
+        assertTrue(frame.leftArm().yaw() > 0f, "expected left arm yaw > 0 (tucked in), was " + frame.leftArm().yaw());
+    }
+
+    /**
+     * The droop itself (plain AFK vs. SLEEPY) is state, not motion, so it must
+     * survive reducedMotion exactly like {@link #sleepyDroopsTheHeadFurtherThanPlainAfk}
+     * shows it does without it.
+     */
+    @Test
+    void reducedMotionSleepyStillDroopsTheHeadFurtherThanPlainAfk() {
+        UUID id = UUID.randomUUID();
+        PlayerCue plain = cue(id, Activity.AFK, 0, 0);
+        PlayerCue sleepy = cue(id, Activity.AFK, 0, CueFlags.SLEEPY);
+
+        float plainPitch = PoseAnimator.frameFor(plain, 0f, 1f, true).head().pitch();
+        float sleepyPitch = PoseAnimator.frameFor(sleepy, 0f, 1f, true).head().pitch();
+
+        assertTrue(sleepyPitch > plainPitch,
+                "expected SLEEPY to droop further even under reducedMotion: plain=" + plainPitch + " sleepy=" + sleepyPitch);
+    }
+
+    /** Unlike {@link #idleBodyIsNonZeroSomewhereInAWindow}, the body sway is exactly the kind of term reducedMotion removes. */
+    @Test
+    void reducedMotionAfkBodyIsPerfectlyStill() {
+        UUID id = UUID.randomUUID();
+        PlayerCue cue = cue(id, Activity.AFK, 0, 0);
+        Limb body = PoseAnimator.frameFor(cue, 733f, 1f, true).body();
+        assertTrue(body.isZero(), "expected AFK's body to be perfectly still under reducedMotion, was " + body);
+    }
+
+    /**
+     * headAim is a blend-to-target driven by {@code weight} alone (a state
+     * change, DESIGN.md §7 P5 hand-test fix), not a per-tick oscillation --
+     * it must keep ramping under reducedMotion exactly as {@link
+     * #headAimReachesFullStrengthAtHalfWeightForTypingAndInScreen} shows it
+     * does without it.
+     */
+    @Test
+    void reducedMotionHeadAimStillRampsWithWeight() {
+        UUID id = UUID.randomUUID();
+        PlayerCue typing = cue(id, Activity.TYPING_CHAT, 128, 0);
+        PlayerCue inScreen = cue(id, Activity.IN_SCREEN, 0, 0);
+
+        assertEquals(1f, PoseAnimator.frameFor(typing, 10f, 0.5f, true).headAim(), 1e-6f);
+        assertEquals(1f, PoseAnimator.frameFor(inScreen, 10f, 0.5f, true).headAim(), 1e-6f);
+        assertEquals(0.8f, PoseAnimator.frameFor(typing, 10f, 0.4f, true).headAim(), 1e-6f);
+    }
+
+    @Test
+    void reducedMotionStillHasAScreenForTypingAndInScreen() {
+        UUID id = UUID.randomUUID();
+        assertTrue(PoseAnimator.frameFor(cue(id, Activity.TYPING_CHAT, 128, 0), 10f, 1f, true).hasScreen());
+        assertTrue(PoseAnimator.frameFor(cue(id, Activity.IN_SCREEN, 0, 0), 10f, 1f, true).hasScreen());
+    }
+
+    @Test
+    void reducedMotionWeightZeroStillReturnsExactlyNone() {
+        UUID id = UUID.randomUUID();
+        PlayerCue typing = cue(id, Activity.TYPING_CHAT, 128, 0);
+        assertEquals(PoseFrame.NONE, PoseAnimator.frameFor(typing, 37f, 0f, true));
+    }
+
     private interface FloatExtractor {
         float apply(PoseFrame frame);
     }
 
     private static int countLocalMaxima(PlayerCue cue, float windowSeconds, float stepSeconds, FloatExtractor extractor) {
-        float previous = extractor.apply(PoseAnimator.frameFor(cue, 0f, 1f));
-        float current = extractor.apply(PoseAnimator.frameFor(cue, stepSeconds * TICKS_PER_SECOND, 1f));
+        float previous = extractor.apply(PoseAnimator.frameFor(cue, 0f, 1f, false));
+        float current = extractor.apply(PoseAnimator.frameFor(cue, stepSeconds * TICKS_PER_SECOND, 1f, false));
         int peaks = 0;
         for (float seconds = 2 * stepSeconds; seconds <= windowSeconds; seconds += stepSeconds) {
-            float next = extractor.apply(PoseAnimator.frameFor(cue, seconds * TICKS_PER_SECOND, 1f));
+            float next = extractor.apply(PoseAnimator.frameFor(cue, seconds * TICKS_PER_SECOND, 1f, false));
             if (current > previous && current > next) {
                 peaks++;
             }

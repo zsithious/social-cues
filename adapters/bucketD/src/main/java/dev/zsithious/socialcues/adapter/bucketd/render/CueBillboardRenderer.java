@@ -17,6 +17,7 @@ import dev.zsithious.socialcues.mcshared.client.RemoteCueStoreHolder;
 import dev.zsithious.socialcues.mcshared.config.ClientConfigState;
 
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.network.PlayerListEntry;
 import net.minecraft.client.render.OverlayTexture;
 import net.minecraft.client.render.RenderLayers;
@@ -25,6 +26,7 @@ import net.minecraft.client.render.command.OrderedRenderCommandQueue;
 import net.minecraft.client.render.entity.state.PlayerEntityRenderState;
 import net.minecraft.client.render.state.CameraRenderState;
 import net.minecraft.client.util.math.MatrixStack;
+import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.RotationAxis;
 import net.minecraft.util.math.Vec3d;
@@ -104,6 +106,18 @@ public final class CueBillboardRenderer {
 
     /** World-size (blocks) of the icon at {@code scale == 1.0} — an independent design choice, DESIGN.md doesn't pin one down. */
     private static final float BASE_ICON_SIZE = 0.3f;
+
+    /**
+     * P6 §4.2 {@code textOnly} mode's text size at {@code scale == 1.0} —
+     * vanilla's own nameplate text scale, reused rather than invented ({@code
+     * javap -c}, {@code LabelCommandRenderer$Commands#add}: {@code
+     * matrices.scale(0.025f, -0.025f, 0.025f)}, applied right after the same
+     * camera-orientation multiply {@link #drawBillboard} already does — see
+     * {@link #drawBillboardText}). Multiplied by {@code config.scale()} the
+     * same way {@link #BASE_ICON_SIZE} already is, so the icon-vs-text
+     * footprint stays comparable at any scale setting.
+     */
+    private static final float BASE_TEXT_SCALE = 0.025f;
 
     /**
      * The rise vanilla itself adds on top of {@code nameLabelPos} before
@@ -208,20 +222,36 @@ public final class CueBillboardRenderer {
             return;
         }
 
-        int cell = CueDisplaySelector.atlasCellFor(cue);
         float half = (BASE_ICON_SIZE * (float) config.scale()) / 2.0f;
         // P5b task 3: CueIconMotion is Layer 1's own idle motion, deliberately
         // independent of layer3Enabled/PoseAnimator (see that class's Javadoc) --
         // it is only ever zero for every cue but AFK, so this costs nothing for
-        // the common case and needs no extra gate here.
-        float bob = CueIconMotion.bobBlocks(cue, state.age);
-        float tilt = CueIconMotion.tiltRadians(cue, state.age);
+        // the common case and needs no extra gate here. Shared by both the icon
+        // and the P6 §4.2 textOnly label below -- the "chrome" (anchor, rise,
+        // tilt, fade) is identical either way, only the drawn content differs.
+        // P6 §4.1: reducedMotion is read from config here (the viewer's own
+        // setting, mcshared.config.ClientConfigState) and passed in, never read
+        // inside core -- see CueIconMotion's own Javadoc.
+        float bob = CueIconMotion.bobBlocks(cue, state.age, config.reducedMotion());
+        float tilt = CueIconMotion.tiltRadians(cue, state.age, config.reducedMotion());
         float rise = VANILLA_LABEL_RISE
                 + (state.playerName != null ? SECOND_LABEL_STEP : 0.0f)
                 + LABEL_HALF_HEIGHT + LABEL_CLEARANCE + half
                 + bob;
 
-        drawBillboard(matrices, queue, camera, state.nameLabelPos, rise, cell, half, state.light, (float) alpha, tilt);
+        // P6 §4.2: textOnly replaces the atlas quad with a translated label at
+        // the exact same anchor/rise/tilt/fade/scale -- see drawBillboardText's
+        // own Javadoc for the drawing itself. Activity.NORMAL's lang key is the
+        // empty string (DESIGN.md §4), but passesSharedRules already rejected
+        // NORMAL cues above, so CueDisplaySelector.langKeyFor(cue) here is never
+        // asked to resolve that case.
+        if (config.textOnly()) {
+            drawBillboardText(matrices, queue, camera, state.nameLabelPos, rise, CueDisplaySelector.langKeyFor(cue),
+                    state.light, (float) alpha, tilt, (float) config.scale());
+        } else {
+            int cell = CueDisplaySelector.atlasCellFor(cue);
+            drawBillboard(matrices, queue, camera, state.nameLabelPos, rise, cell, half, state.light, (float) alpha, tilt);
+        }
     }
 
     private static String resolvePlayerName(MinecraftClient client, UUID id) {
@@ -261,6 +291,79 @@ public final class CueBillboardRenderer {
 
         queue.submitCustom(matrices, RenderLayers.entityTranslucent(CUES_TEXTURE), (entry, vertices) ->
                 emitQuad(entry, vertices, half, minU, maxU, minV, maxV, light, alphaByte));
+        matrices.pop();
+    }
+
+    /**
+     * P6 §4.2 {@code textOnly} — the translated-label counterpart of {@link
+     * #drawBillboard}. The first three statements below are byte-for-byte the
+     * same billboard transform {@link #drawBillboard} uses (translate to
+     * {@code anchor + rise}, multiply in the camera orientation, optionally
+     * roll about the now-view-aligned local {@code +Z} for {@link
+     * CueIconMotion#tiltRadians}) — same anchor, same rise, same tilt, on
+     * purpose, so the label sits exactly where the icon would have.
+     *
+     * <p>Where it diverges: {@link #drawBillboard}'s quad geometry is already
+     * y-up, so (per that method's own comment) it draws with no further flip.
+     * Text cannot skip that flip — font glyphs are authored in a y-down pixel
+     * space — so this method applies vanilla's own remedy for the same
+     * problem: {@link #BASE_TEXT_SCALE} is vanilla's own {@code
+     * scale(0.025f, -0.025f, 0.025f)} ({@code javap -c}-verified, see that
+     * constant's Javadoc), scaled further by {@code configScale} the same way
+     * {@link #BASE_ICON_SIZE} already is.
+     *
+     * <p>Drawing itself follows vanilla's nameplate text path, not an invented
+     * one: vanilla's own name labels are queued through {@code
+     * OrderedRenderCommandQueue#submitLabel} ({@code javap -c}-verified on
+     * {@code RenderCommandQueue}: {@code submitLabel(MatrixStack, Vec3d, int,
+     * Text, boolean, int, double, CameraRenderState)}, called from {@code
+     * EntityRenderer#renderLabelIfPresent} with exactly {@code
+     * (matrices, state.nameLabelPos, 0, text, !state.sneaking, state.light,
+     * state.squaredDistanceToCamera, camera)}) — but {@code submitLabel} does
+     * its <em>own</em> internal translate/orient/{@code scale(0.025f,
+     * -0.025f, 0.025f)} with no hook for {@code config.scale()}, which is
+     * exactly the one thing this method must be able to override. So the
+     * camera-billboard transform is reproduced by hand instead (identical to
+     * {@link #drawBillboard}'s own, see above), and {@link
+     * OrderedRenderCommandQueue#submitText} — the same queue method {@code
+     * CueScreenPanelRenderer.drawChatText} already uses for plane-fixed text —
+     * draws into the already-positioned result. Horizontal centering
+     * ({@code -textWidth / 2f}) mirrors vanilla's own trick for the identical
+     * purpose ({@code javap -c}, {@code LabelCommandRenderer$Commands#add}:
+     * {@code -textRenderer.getWidth(text) / 2f}).
+     */
+    private static void drawBillboardText(MatrixStack matrices, OrderedRenderCommandQueue queue,
+            CameraRenderState camera, Vec3d anchor, float rise, String langKey, int light, float alpha,
+            float tilt, float configScale) {
+        TextRenderer textRenderer = MinecraftClient.getInstance().textRenderer;
+        if (textRenderer == null) {
+            return; // Not yet available this early in startup; drawBillboard's quad path has no equivalent dependency.
+        }
+        Text label = Text.translatable(langKey);
+        float textWidth = textRenderer.getWidth(label);
+
+        matrices.push();
+        matrices.translate(anchor.x, anchor.y + rise, anchor.z);
+        matrices.multiply(camera.orientation);
+        if (tilt != 0f) {
+            matrices.multiply(RotationAxis.POSITIVE_Z.rotation(tilt));
+        }
+        float textScale = BASE_TEXT_SCALE * configScale;
+        matrices.scale(textScale, -textScale, textScale);
+
+        // Opaque white, alpha-only fade -- the same white drawBillboard's own
+        // vertex() tints its quad with (255, 255, 255, alphaByte), so an icon and
+        // its text-mode replacement read as the same "brightness" at any distance.
+        int alphaByte = Math.round(clamp01(alpha) * 255.0f);
+        int color = (alphaByte << 24) | 0xFFFFFF;
+
+        // DESIGN.md §7 P5b precedent (CueScreenPanelRenderer.drawChatText's own
+        // note): whether submitText's colour alpha byte is actually honoured all
+        // the way into the vertex consumer was not javap-traced to the end there
+        // either, and is not here -- a reasonable assumption given vanilla's own
+        // chat/actionbar fade relies on the same path, not a proven one.
+        queue.submitText(matrices, -textWidth / 2f, 0f, label.asOrderedText(), false,
+                TextRenderer.TextLayerType.NORMAL, light, color, 0, 0);
         matrices.pop();
     }
 

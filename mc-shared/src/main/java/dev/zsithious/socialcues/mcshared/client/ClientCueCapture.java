@@ -19,6 +19,7 @@ import dev.zsithious.socialcues.core.state.PlayerCue;
 import dev.zsithious.socialcues.core.state.ScreenKind;
 import dev.zsithious.socialcues.core.util.IdleTimer;
 import dev.zsithious.socialcues.core.util.TypingRateMeter;
+import dev.zsithious.socialcues.mcshared.config.ClientConfigState;
 import dev.zsithious.socialcues.mcshared.network.ClientHandshakeNetworking;
 import dev.zsithious.socialcues.mcshared.network.SocialCuesPayload;
 
@@ -179,6 +180,25 @@ public final class ClientCueCapture {
         LocalCueState.reset();
     }
 
+    /**
+     * P6 §4.5's "a config change must not wait out the rate limit" gap: called
+     * by {@code mcshared.config.ClientConfigState#set} — the single choke point
+     * every config write goes through (see its own Javadoc) — every time the
+     * player saves new settings. {@link CueSampler#reset} already exists for
+     * exactly this shape of problem (its own Javadoc: "the new session must not
+     * assume the other end still remembers what a previous session last saw"),
+     * originally written for reconnects; a privacy toggle is the same situation
+     * with a different trigger — the relay must not go on assuming it still
+     * knows this client's current, just-changed state. Resetting only the
+     * sampler (not the rest of {@link #reset()}, which also forgets AFK/pose
+     * bookkeeping and the command-draft detector) is deliberate: none of that
+     * other state has anything to do with a config save, and clearing it would
+     * cost, at worst, one tick's worth of AFK-timer precision for no reason.
+     */
+    public static void onConfigChanged() {
+        SAMPLER.reset();
+    }
+
     // ---- ScreenKeyboardEvents wiring (typing cadence + command detection) --
 
     private static void onScreenInit(MinecraftClient client, Screen screen, int width, int height) {
@@ -322,9 +342,41 @@ public final class ClientCueCapture {
         // of CueSampler's own change-detection/rate-limit gate: a player showing themselves
         // their own current state has nothing to do with how often that state is worth
         // spending network bandwidth to tell someone else.
+        //
+        // P6 §3/§4.5 (B1): deliberately NOT stamped with CueFlags.MUTED_SELF here even when
+        // ClientConfigState.get().shareNothing() is set, unlike the outgoing wire update
+        // below. shareNothing is a *sharing* switch, not a *viewing* one (see
+        // ClientConfigData's own Javadoc, DESIGN.md §9): it must never change what this
+        // client renders about anyone — including, deliberately, itself. LocalCueState
+        // exists specifically so showOnSelf shows the player their own true, unmasked state
+        // (see that class's Javadoc: "maskeleme başkalarının ne göreceğini korumak için var,
+        // kendi gerçek durumunu kendinden gizlemenin bir anlamı yok"). Stamping MUTED_SELF
+        // here instead would make BillboardCueVisibility.passesSharedRules bail on the
+        // player's own cue too (it treats the flag as an unconditional "never render this"),
+        // silently turning "stop telling the relay" into "stop telling yourself" — which
+        // nothing in P6 asks for and the spec explicitly rules out.
         LocalCueState.update(new PlayerCue(client.player.getUuid(), activity, screenKind, intensity, flags, now));
 
         Optional<CueUpdate> update = SAMPLER.sample(activity, screenKind, intensity, flags, effectiveBits, now);
+        // P6 §3/§4.5 (B1): the *wire* half of shareNothing — applied to the already-sampled
+        // CueUpdate, not folded into `flags` above. prefBits() already forces effectiveBits to
+        // PolicyBits.NONE under shareNothing (see ClientConfigData.prefBits's own Javadoc),
+        // which alone already collapses `activity` to NORMAL inside CueSampler/
+        // EffectivePolicy.applyNear — so this flag changes nothing about the value actually
+        // sent today. It is set anyway because it is the *explicit* statement of intent, not a
+        // derived one: it is exactly what core.policy.EffectivePolicy#applyNear's own
+        // MUTED_SELF branch on the relay reads as its defense-in-depth check (see that
+        // method's Javadoc), and that check has had nothing to actually read until now — the
+        // relay has been honouring a flag nobody ever set. It has to be applied here, after
+        // SAMPLER.sample returns, rather than folded into `flags` as an input to that call:
+        // applyNear treats MUTED_SELF as an unconditional "return a fully neutral entry"
+        // short-circuit, which zeroes the flags field of that neutral entry too — fed in as an
+        // input, the flag would erase itself before ever reaching the wire. OR'd onto the
+        // result instead, it survives to the byte the relay actually sees.
+        if (ClientConfigState.get().shareNothing()) {
+            update = update.map(u -> new CueUpdate(u.activity(), u.screenKind(), u.intensity(),
+                    u.flags() | CueFlags.MUTED_SELF));
+        }
         update.ifPresent(u -> {
             ClientPlayNetworking.send(new SocialCuesPayload(C2SMessages.encode(u)));
             logTransition(u);

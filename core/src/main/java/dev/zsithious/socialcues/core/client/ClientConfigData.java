@@ -38,6 +38,27 @@ import dev.zsithious.socialcues.core.policy.PolicyBits;
  * holds unmodified: the server's {@code policyBits} remains the upper bound
  * ({@code core.policy.EffectivePolicy}), this record only ever describes
  * what the *client* is asking to share.
+ *
+ * <p><b>{@code shareNothing} — P6 master privacy switch (DESIGN.md §9
+ * "Gizlilik", §4 {@code CueFlags.MUTED_SELF}).</b> A single opt-out that
+ * suspends all five {@code share*} signals at once, for the person who
+ * wants this mod's rendering but never wants their own state relayed to
+ * anyone. <em>Suspends</em>, not erases: the five fields keep whatever the
+ * user chose, so switching the master back off restores those choices
+ * instead of leaving everything silently off — see the compact constructor
+ * for why this one rule is enforced in {@link #prefBits()} rather than
+ * folded into the fields the way {@code shareScreenDetail} is. It is a
+ * <em>sharing</em> switch, never a <em>viewing</em> one:
+ * flipping it changes what this client tells the relay about its own
+ * player and has no effect whatsoever on what this client renders about
+ * other players — that asymmetry is deliberate (a P6 config-screen tooltip
+ * must say so explicitly, not just imply it). The compact constructor
+ * enforces the flag→booleans direction of that rule once, here, the same
+ * way {@code shareScreenDetail = shareScreenDetail && shareScreens} already
+ * keeps that narrower rule from needing a second copy anywhere that reads
+ * the raw booleans (a config screen, a debug overlay). {@link #prefBits()}
+ * enforces the other half — see that method's own Javadoc for why
+ * {@code GLOBAL_TIER} is not exempted the way it normally is.
  */
 public record ClientConfigData(
         boolean layer1Enabled,
@@ -49,6 +70,7 @@ public record ClientConfigData(
         boolean showOnSelf,
         boolean reducedMotion,
         boolean textOnly,
+        boolean shareNothing,
         boolean shareTyping,
         boolean shareScreens,
         boolean shareScreenDetail,
@@ -82,6 +104,22 @@ public record ClientConfigData(
         // directly (a config UI checkbox, a debug screen), so nothing else
         // has to remember "SCREEN_DETAIL implies SCREENS" a second time.
         shareScreenDetail = shareScreenDetail && shareScreens;
+        // shareNothing is deliberately NOT folded into the five share* fields the
+        // way shareScreenDetail is folded into shareScreens one line above. The
+        // two rules look alike and are not: SCREEN_DETAIL without SCREENS is
+        // *meaningless* (a detail of something that is never sent), so collapsing
+        // it loses nothing, whereas shareNothing is a *suspension* of five
+        // preferences the user actually expressed. Forcing them false here would
+        // persist that erasure to disk, and turning the master switch back off
+        // would leave every signal silently off — the user would have to
+        // remember and re-enter choices the mod threw away on their behalf. So
+        // the individual fields keep their values, and shareNothing is enforced
+        // in the one place that decides what actually leaves this machine:
+        // prefBits(), which short-circuits to NONE (plus the explicit
+        // CueFlags.MUTED_SELF that mcshared.client.ClientCueCapture stamps on
+        // the outgoing update). Nothing else in the mod reads the raw share*
+        // booleans — a config screen renders them greyed out but still ticked,
+        // which is exactly the state being described.
         mutedPlayers = normalizeMutedPlayers(mutedPlayers);
     }
 
@@ -92,6 +130,7 @@ public record ClientConfigData(
                 DEFAULT_SCALE, DEFAULT_OPACITY, DEFAULT_MAX_DISTANCE,
                 false,
                 false, false,
+                false,
                 true, true, true, true, true,
                 Set.of());
     }
@@ -128,9 +167,24 @@ public record ClientConfigData(
      *       idle status shared at all implies not wanting it in the
      *       server-wide tab-list tier either.</li>
      * </ul>
+     *
+     * <p><b>{@code shareNothing} is the one exception to "{@code GLOBAL_TIER}
+     * is always requested" above</b> (P6 §3): the compact constructor has
+     * already forced every {@code share*} field to {@code false} by the time
+     * this method runs, which alone would still leave {@code GLOBAL_TIER} set
+     * — that bit is not gated by any of the five fields the loop below reads,
+     * it is unconditional. So {@code shareNothing} is checked here too,
+     * short-circuiting to {@link PolicyBits#NONE} before the unconditional
+     * bit is ever added. Opting out of every signal is meant to mean opting
+     * out of the coarse server-wide activity tier as well, not just the
+     * near-range detail — leaving {@code GLOBAL_TIER} on for a "share
+     * nothing" client would silently defeat the whole point of the switch.
      */
     @Override
     public int prefBits() {
+        if (shareNothing) {
+            return PolicyBits.NONE;
+        }
         int bits = PolicyBits.NONE;
         if (shareTyping) {
             bits |= PolicyBits.TYPING | PolicyBits.INTENSITY;

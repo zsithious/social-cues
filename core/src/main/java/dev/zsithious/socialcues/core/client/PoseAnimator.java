@@ -58,6 +58,29 @@ import dev.zsithious.socialcues.core.state.PlayerCue;
  * "hands flung out to the sides" instead of "hands tucked in" — see DESIGN.md
  * §7's "P5 el testi bulguları" section for the full account. Every pose below
  * now follows the rule as written; if you add a new one, follow it too.
+ *
+ * <p><b>{@code reducedMotion} (P6 §4.1, DESIGN.md §9 "animasyon yok, sadece
+ * statik ikon"): "every time-varying term is removed; state changes still
+ * happen."</b> Concretely, every {@code sine}/{@code noise}/{@code noiseAt}/
+ * {@code reach}/{@code tapStream} call below feeds the per-tick jitter —
+ * bob, tap, drift, reach, wobble, nod, sway, loll — that this class's own
+ * Javadoc above spends several paragraphs justifying as "what makes it read
+ * as a comic-strip snore" rather than "machinery". {@code reducedMotion}
+ * zeroes exactly those terms, one call site at a time, and leaves everything
+ * else — the base arm pose a hand rests at between taps, the panel's base
+ * tilt, {@code busy}/{@code intensity}-driven amplitudes, {@code sleepy}'s
+ * deeper droop and arm sag, and {@code headAim}/{@code weight}'s blend
+ * ramps — untouched. The result is not "no pose": a reduced-motion typing
+ * player still has their arms up and hands tucked in exactly where the full
+ * animation would rest between taps, a reduced-motion {@code IN_SCREEN}
+ * player still holds the panel up at its resting tilt with one arm at its
+ * base "working" angle, and a reduced-motion {@code AFK}/{@code SLEEPY}
+ * player's head still droops to the depth that state implies — all of it
+ * held perfectly still, because {@code weight}'s blend-in/out is a state
+ * change (a pose appearing or fading is not "motion" in the sense this
+ * switch means) and the constant-valued rest pose underneath the jitter is
+ * likewise state, not motion. See {@code PoseAnimatorTest}'s {@code
+ * reducedMotion} cases for exactly which fields this zeroes per activity.
  */
 public final class PoseAnimator {
 
@@ -189,14 +212,19 @@ public final class PoseAnimator {
      * The pose offsets for {@code cue} at this instant, already multiplied by
      * {@code weight}.
      *
-     * @param cue      the player's current cue; its activity, flags and
-     *                 intensity drive the motion, and its id seeds the
-     *                 pseudo-randomness so two players never move identically
-     * @param ageTicks the rendered entity's age in ticks, fractional
-     * @param weight   0..1 blend weight; values outside are clamped
+     * @param cue           the player's current cue; its activity, flags and
+     *                      intensity drive the motion, and its id seeds the
+     *                      pseudo-randomness so two players never move
+     *                      identically
+     * @param ageTicks      the rendered entity's age in ticks, fractional
+     * @param weight        0..1 blend weight; values outside are clamped
+     * @param reducedMotion P6 §4.1: when {@code true}, every per-tick
+     *                      oscillation term is zeroed — see this class's
+     *                      Javadoc for exactly what that does and does not
+     *                      change
      * @return never {@code null}; exactly {@link PoseFrame#NONE} at weight 0
      */
-    public static PoseFrame frameFor(PlayerCue cue, float ageTicks, float weight) {
+    public static PoseFrame frameFor(PlayerCue cue, float ageTicks, float weight, boolean reducedMotion) {
         Objects.requireNonNull(cue, "cue");
         float w = clamp01(weight);
         if (w <= 0f) {
@@ -204,9 +232,10 @@ public final class PoseAnimator {
         }
         int seed = cue.id().hashCode();
         return switch (cue.activity()) {
-            case TYPING_CHAT, TYPING_COMMAND, TYPING_SIGN, TYPING_BOOK -> typing(cue.intensity(), ageTicks, seed, w);
-            case IN_SCREEN -> inScreen(ageTicks, seed, w);
-            case AFK -> idle(cue.hasFlag(CueFlags.SLEEPY), ageTicks, seed, w);
+            case TYPING_CHAT, TYPING_COMMAND, TYPING_SIGN, TYPING_BOOK ->
+                    typing(cue.intensity(), ageTicks, seed, w, reducedMotion);
+            case IN_SCREEN -> inScreen(ageTicks, seed, w, reducedMotion);
+            case AFK -> idle(cue.hasFlag(CueFlags.SLEEPY), ageTicks, seed, w, reducedMotion);
             // NORMAL has nothing to show, and SPEAKING is Layer 1/2 only: DESIGN.md §7
             // gives Layer 3 three motions, and inventing a fourth for voice would move
             // the mod's own goalposts rather than implement them.
@@ -220,7 +249,7 @@ public final class PoseAnimator {
      * typing is not a perfect left-right alternation, and one shared stream is
      * exactly what makes an animation look mechanical.
      */
-    private static PoseFrame typing(int intensity, float ageTicks, int seed, float w) {
+    private static PoseFrame typing(int intensity, float ageTicks, int seed, float w, boolean reducedMotion) {
         float busy = clamp01(intensity / 255f);
         float seconds = ageTicks / TICKS_PER_SECOND;
 
@@ -234,8 +263,14 @@ public final class PoseAnimator {
         // own phase-shifted copy instead (same frequency, different offset
         // into the sine, derived from the seed the same way every other
         // per-hand split in this method already is).
-        float rightDrift = sine(seconds + noise(seed) * 3f, TYPING_DRIFT_HZ) * TYPING_DRIFT;
-        float leftDrift = sine(seconds + noise(seed ^ 0x1b873593) * 3f, TYPING_DRIFT_HZ) * TYPING_DRIFT;
+        //
+        // P6 §4.1: every term below that is zeroed under reducedMotion is the
+        // per-tick oscillation this class's own Javadoc calls out (drift/tap/
+        // reach); what is left after all three are zero is exactly the
+        // steady "hands up, tucked in, resting between taps" pose.
+        float rightDrift = reducedMotion ? 0f : sine(seconds + noise(seed) * 3f, TYPING_DRIFT_HZ) * TYPING_DRIFT;
+        float leftDrift = reducedMotion ? 0f
+                : sine(seconds + noise(seed ^ 0x1b873593) * 3f, TYPING_DRIFT_HZ) * TYPING_DRIFT;
 
         // Each hand runs its own tap stream -- see tapStream's own Javadoc for
         // why that now has to mean its own time grid (rate + phase), not just
@@ -243,11 +278,11 @@ public final class PoseAnimator {
         // same step/within every time, so only WHETHER a step taps differed
         // between hands, never WHEN -- read from outside as "both arms
         // twitching in sync" (DESIGN.md §7 P5 second hand-test finding).
-        Tap rightTap = tapStream(seconds, hz, seed);
-        Tap leftTap = tapStream(seconds, hz, seed ^ 0x5bf03635);
+        Tap rightTap = reducedMotion ? Tap.NONE : tapStream(seconds, hz, seed);
+        Tap leftTap = reducedMotion ? Tap.NONE : tapStream(seconds, hz, seed ^ 0x5bf03635);
         // ...and its own slow wander across the keys.
-        float rightReach = noiseAt(seconds, 1.1f, seed ^ 0x27d4eb2f) * TYPING_REACH_YAW;
-        float leftReach = noiseAt(seconds, 1.1f, seed ^ 0x165667b1) * TYPING_REACH_YAW;
+        float rightReach = reducedMotion ? 0f : noiseAt(seconds, 1.1f, seed ^ 0x27d4eb2f) * TYPING_REACH_YAW;
+        float leftReach = reducedMotion ? 0f : noiseAt(seconds, 1.1f, seed ^ 0x165667b1) * TYPING_REACH_YAW;
 
         // Model-space sign rule (see this class' Javadoc): tucking a hand IN
         // toward the body's centre is negative yaw/roll on the right arm,
@@ -288,10 +323,13 @@ public final class PoseAnimator {
      * is the whole point: two arms doing the same thing reads as "carrying a
      * box", one still and one moving reads as "using it".
      */
-    private static PoseFrame inScreen(float ageTicks, int seed, float w) {
+    private static PoseFrame inScreen(float ageTicks, int seed, float w, boolean reducedMotion) {
         float seconds = ageTicks / TICKS_PER_SECOND;
-        float wobble = sine(seconds, SCREEN_WOBBLE_HZ);
-        float wobble2 = sine(seconds, SCREEN_WOBBLE_HZ_2);
+        // P6 §4.1: wobble/reach are this pose's per-tick oscillation terms;
+        // zeroing them under reducedMotion leaves the panel at its resting
+        // tilt with the working arm at its base (un-reached-to-a-slot) angle.
+        float wobble = reducedMotion ? 0f : sine(seconds, SCREEN_WOBBLE_HZ);
+        float wobble2 = reducedMotion ? 0f : sine(seconds, SCREEN_WOBBLE_HZ_2);
 
         // The holding arm gets only the panel's own wobble — it is holding, not
         // working. Left arm; model-space sign rule (see this class' Javadoc):
@@ -303,9 +341,9 @@ public final class PoseAnimator {
 
         // The working arm moves from slot to slot: a quick settle, then a pause,
         // then off to somewhere else — never a continuous sweep.
-        float reachPitch = reach(seconds, seed) * SCREEN_REACH_PITCH;
-        float reachYaw = reach(seconds, seed ^ 0x9e3779b9) * SCREEN_REACH_YAW;
-        float reachRoll = reach(seconds, seed ^ 0x85ebca6b) * SCREEN_REACH_ROLL;
+        float reachPitch = reducedMotion ? 0f : reach(seconds, seed) * SCREEN_REACH_PITCH;
+        float reachYaw = reducedMotion ? 0f : reach(seconds, seed ^ 0x9e3779b9) * SCREEN_REACH_YAW;
+        float reachRoll = reducedMotion ? 0f : reach(seconds, seed ^ 0x85ebca6b) * SCREEN_REACH_ROLL;
         // Right arm; model-space sign rule: tucking IN is NEGATIVE roll on the right.
         Limb work = new Limb(
                 SCREEN_WORK_PITCH + reachPitch + wobble * SCREEN_WOBBLE_ARM,
@@ -335,19 +373,24 @@ public final class PoseAnimator {
      * head lolling sideways, and the body shifting its weight underneath — three
      * motions on three frequencies that never line up.
      */
-    private static PoseFrame idle(boolean sleepy, float ageTicks, int seed, float w) {
+    private static PoseFrame idle(boolean sleepy, float ageTicks, int seed, float w, boolean reducedMotion) {
         float seconds = ageTicks / TICKS_PER_SECOND;
         float rate = sleepy ? SLEEPY_RATE_SCALE : 1f;
         float droop = sleepy ? SLEEPY_HEAD_PITCH : AFK_HEAD_PITCH;
         // A per-player phase offset, so a room full of idle players does not sway as one.
         float phase = noise(seed) * 10f;
 
-        float nod = sine(seconds + phase, AFK_NOD_HZ * rate) * AFK_NOD;
-        float headSway = sine(seconds + phase, AFK_HEAD_SWAY_HZ * rate) * AFK_HEAD_SWAY;
-        float loll = sine(seconds + phase * 1.3f, AFK_HEAD_SWAY_HZ * rate * 0.8f) * AFK_HEAD_LOLL;
+        // P6 §4.1: nod/sway/loll/bodyPhase* are this pose's per-tick oscillation
+        // terms; zeroing them under reducedMotion leaves exactly `droop` (and,
+        // below, `armSag`) — the state droop/sag already carries for sleepy vs.
+        // plain AFK, held still rather than nodding/swaying on top of it.
+        float nod = reducedMotion ? 0f : sine(seconds + phase, AFK_NOD_HZ * rate) * AFK_NOD;
+        float headSway = reducedMotion ? 0f : sine(seconds + phase, AFK_HEAD_SWAY_HZ * rate) * AFK_HEAD_SWAY;
+        float loll = reducedMotion ? 0f
+                : sine(seconds + phase * 1.3f, AFK_HEAD_SWAY_HZ * rate * 0.8f) * AFK_HEAD_LOLL;
 
-        float bodyPhase = sine(seconds + phase * 0.7f, AFK_BODY_SWAY_HZ * rate);
-        float bodyPhase2 = sine(seconds + phase * 1.9f, AFK_BODY_SWAY_HZ * rate * 1.37f);
+        float bodyPhase = reducedMotion ? 0f : sine(seconds + phase * 0.7f, AFK_BODY_SWAY_HZ * rate);
+        float bodyPhase2 = reducedMotion ? 0f : sine(seconds + phase * 1.9f, AFK_BODY_SWAY_HZ * rate * 1.37f);
 
         Limb head = new Limb(droop + nod, headSway, loll);
         Limb body = new Limb(

@@ -30,6 +30,26 @@ import dev.zsithious.socialcues.core.state.PlayerCue;
  * avalanche {@link PoseAnimator} uses, so two clients watching the same player
  * see the same gibberish, nothing has to be synchronised, and there is no RNG
  * to keep alive per player.
+ *
+ * <p><b>{@code reducedMotion} (P6 §4.1, DESIGN.md §9 "animasyon yok, sadece
+ * statik ikon").</b> Both public methods take how many characters have been
+ * "typed" and derive everything else (which line, which column, the caret
+ * position) from that one count — see {@link #typedCount}. Normally that
+ * count grows with {@code seconds}, which is exactly the time-varying term
+ * P6 asks for removed: {@code reducedMotion} makes it a fixed constant
+ * instead ({@link #REDUCED_MOTION_TYPED}), independent of {@code seconds}
+ * entirely, so every call for the same {@code cue} returns byte-identical
+ * output no matter when it is asked. Deliberately not zero: freezing at the
+ * very first frame would show an empty panel with nothing on it, which reads
+ * as broken chrome rather than as "typing, held still" — a fixed
+ * mid-line count keeps a snapshot of gibberish on the in-progress line (its
+ * content still varies per player, only its length stops moving) the same
+ * way {@link PoseAnimator}'s reduced-motion pose still visibly holds a pose
+ * instead of going fully neutral. There is no blend-in/out state here the
+ * way {@link PoseAnimator} has via {@code weight} — a typing/screen cue
+ * either has a panel or it does not — so unlike that class there is no
+ * "state change" left to preserve once the per-tick term is gone; this is
+ * simply the stable single frame P6 §4.1 asks for.
  */
 public final class FakeChatStream {
 
@@ -50,6 +70,14 @@ public final class FakeChatStream {
      */
     public static final int MAX_LINE_LENGTH = 13;
 
+    /**
+     * {@code reducedMotion}'s fixed stand-in for a real, time-derived typed
+     * count (see this class's Javadoc). Deliberately mid-line rather than 0
+     * or {@code MAX_LINE_LENGTH - 1}: a snapshot that reads as "part-way
+     * through a word", not as "just started" or "about to wrap".
+     */
+    private static final int REDUCED_MOTION_TYPED = MAX_LINE_LENGTH / 2;
+
     private static final char[] ALPHABET = "abcdefghijklmnopqrstuvwxyz     ".toCharArray();
 
     /** Characters per second at {@code intensity} 0 … 255 — the same cadence the tap animation uses. */
@@ -64,13 +92,15 @@ public final class FakeChatStream {
      * time, oldest first. The last entry is the line currently being "typed"
      * and grows over time; it may be empty just after a line wraps.
      *
+     * @param reducedMotion P6 §4.1: when {@code true}, {@code seconds} is
+     *                      ignored and a single fixed frame is returned
+     *                      instead — see this class's Javadoc
      * @return a list of exactly {@link #VISIBLE_LINES} strings, never null
      */
-    public static List<String> lines(PlayerCue cue, float seconds) {
+    public static List<String> lines(PlayerCue cue, float seconds, boolean reducedMotion) {
         Objects.requireNonNull(cue, "cue");
         int seed = cue.id().hashCode();
-        float cps = MIN_CPS + (MAX_CPS - MIN_CPS) * clamp01(cue.intensity() / 255f);
-        int typed = (int) Math.max(0, seconds * cps);
+        int typed = typedCount(cue, seconds, reducedMotion);
 
         // Which line we are on, and how far into it, if every line runs to MAX_LINE_LENGTH.
         int lineIndex = typed / MAX_LINE_LENGTH;
@@ -85,12 +115,34 @@ public final class FakeChatStream {
         return out;
     }
 
-    /** Where the caret sits on the in-progress line — a renderer draws a blinking cursor here. */
-    public static int caretColumn(PlayerCue cue, float seconds) {
+    /**
+     * Where the caret sits on the in-progress line — a renderer draws a
+     * blinking cursor here (or, per P6 §4.1, a caret that does not blink,
+     * when the renderer itself honours {@code reducedMotion} — that toggle
+     * is renderer chrome outside this class, see {@code
+     * CueScreenPanelRenderer}).
+     *
+     * @param reducedMotion P6 §4.1: when {@code true}, {@code seconds} is
+     *                      ignored and a single fixed column is returned
+     *                      instead — see this class's Javadoc
+     */
+    public static int caretColumn(PlayerCue cue, float seconds, boolean reducedMotion) {
         Objects.requireNonNull(cue, "cue");
+        return typedCount(cue, seconds, reducedMotion) % MAX_LINE_LENGTH;
+    }
+
+    /**
+     * How many characters {@code cue} has "typed" as of {@code seconds} —
+     * the one quantity {@link #lines} and {@link #caretColumn} both derive
+     * everything else from, so {@code reducedMotion}'s override only has to
+     * live in one place.
+     */
+    private static int typedCount(PlayerCue cue, float seconds, boolean reducedMotion) {
+        if (reducedMotion) {
+            return REDUCED_MOTION_TYPED;
+        }
         float cps = MIN_CPS + (MAX_CPS - MIN_CPS) * clamp01(cue.intensity() / 255f);
-        int typed = (int) Math.max(0, seconds * cps);
-        return typed % MAX_LINE_LENGTH;
+        return (int) Math.max(0, seconds * cps);
     }
 
     private static String line(int seed, int lineIndex, int length) {

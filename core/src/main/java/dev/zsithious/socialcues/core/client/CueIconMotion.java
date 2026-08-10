@@ -19,6 +19,16 @@ import dev.zsithious.socialcues.core.state.PlayerCue;
  * it must keep working for a player who has turned the pose layer off, and it
  * must not be reachable only through {@link PoseAnimator}. Hence a separate
  * entry point rather than two more fields on {@link PoseFrame}.
+ *
+ * <p><b>{@code reducedMotion} (P6 §4.1, DESIGN.md §9 "animasyon yok, sadece
+ * statik ikon").</b> This class has exactly one time-varying term each
+ * method — the sine — and nothing that counts as a state change the way
+ * {@link PoseAnimator}'s pose-blend-in does: the sleep icon has no "resting
+ * target" of its own to hold at, it is either bobbing or it is doing nothing.
+ * So {@code reducedMotion} is the simplest possible instance of the general
+ * P6 rule ("every time-varying term is removed"): both methods return
+ * exactly {@code 0f} when it is set, same as they already do for every
+ * activity but {@link Activity#AFK}.
  */
 public final class CueIconMotion {
 
@@ -32,17 +42,35 @@ public final class CueIconMotion {
     private CueIconMotion() {
     }
 
-    /** How far above its anchor the icon should sit this frame, in blocks. */
-    public static float bobBlocks(PlayerCue cue, float ageTicks) {
+    /**
+     * How far above its anchor the icon should sit this frame, in blocks.
+     *
+     * @param reducedMotion P6 §4.1: when {@code true}, always {@code 0f} —
+     *                      see this class's Javadoc for why there is no
+     *                      "steady" non-zero bob to fall back to instead.
+     */
+    public static float bobBlocks(PlayerCue cue, float ageTicks, boolean reducedMotion) {
         if (!snoozing(cue)) {
+            return 0f;
+        }
+        if (reducedMotion) {
             return 0f;
         }
         return sine(seconds(ageTicks) + phase(cue), SLEEP_BOB_HZ) * SLEEP_BOB_BLOCKS;
     }
 
-    /** How far the icon should be tilted this frame, radians, about the view axis. */
-    public static float tiltRadians(PlayerCue cue, float ageTicks) {
+    /**
+     * How far the icon should be tilted this frame, radians, about the view axis.
+     *
+     * @param reducedMotion P6 §4.1: when {@code true}, always {@code 0f} —
+     *                      see this class's Javadoc for why there is no
+     *                      "steady" non-zero tilt to fall back to instead.
+     */
+    public static float tiltRadians(PlayerCue cue, float ageTicks, boolean reducedMotion) {
         if (!snoozing(cue)) {
+            return 0f;
+        }
+        if (reducedMotion) {
             return 0f;
         }
         return sine(seconds(ageTicks) + phase(cue) * 1.7f, SLEEP_TILT_HZ) * SLEEP_TILT;

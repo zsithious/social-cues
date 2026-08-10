@@ -77,14 +77,14 @@ class TabListCueVisibilityTest {
     private static ClientConfigData withLayer2(boolean layer2Enabled) {
         ClientConfigData d = ClientConfigData.defaults();
         return new ClientConfigData(d.layer1Enabled(), layer2Enabled, d.layer3Enabled(), d.scale(), d.opacity(),
-                d.maxDistance(), d.showOnSelf(), d.reducedMotion(), d.textOnly(), d.shareTyping(), d.shareScreens(),
+                d.maxDistance(), d.showOnSelf(), d.reducedMotion(), d.textOnly(), d.shareNothing(), d.shareTyping(), d.shareScreens(),
                 d.shareScreenDetail(), d.shareIdle(), d.shareVoice(), d.mutedPlayers());
     }
 
     private static ClientConfigData withMuted(Set<String> mutedPlayers) {
         ClientConfigData d = ClientConfigData.defaults();
         return new ClientConfigData(d.layer1Enabled(), d.layer2Enabled(), d.layer3Enabled(), d.scale(), d.opacity(),
-                d.maxDistance(), d.showOnSelf(), d.reducedMotion(), d.textOnly(), d.shareTyping(), d.shareScreens(),
+                d.maxDistance(), d.showOnSelf(), d.reducedMotion(), d.textOnly(), d.shareNothing(), d.shareTyping(), d.shareScreens(),
                 d.shareScreenDetail(), d.shareIdle(), d.shareVoice(), mutedPlayers);
     }
 }

@@ -30,7 +30,7 @@ class FakeChatStreamTest {
         UUID id = UUID.randomUUID();
         PlayerCue cue = cue(id, 128);
         for (float seconds : new float[] {0f, 0.1f, 1f, 5f, 37.25f, 400f}) {
-            List<String> lines = FakeChatStream.lines(cue, seconds);
+            List<String> lines = FakeChatStream.lines(cue, seconds, false);
             assertEquals(FakeChatStream.VISIBLE_LINES, lines.size(), "wrong line count at seconds=" + seconds);
         }
     }
@@ -39,19 +39,19 @@ class FakeChatStreamTest {
     void deterministicForTheSameCueAndTime() {
         UUID id = UUID.randomUUID();
         PlayerCue cue = cue(id, 200);
-        List<String> first = FakeChatStream.lines(cue, 12.5f);
-        List<String> second = FakeChatStream.lines(cue, 12.5f);
+        List<String> first = FakeChatStream.lines(cue, 12.5f, false);
+        List<String> second = FakeChatStream.lines(cue, 12.5f, false);
         assertEquals(first, second);
 
-        assertEquals(FakeChatStream.caretColumn(cue, 12.5f), FakeChatStream.caretColumn(cue, 12.5f));
+        assertEquals(FakeChatStream.caretColumn(cue, 12.5f, false), FakeChatStream.caretColumn(cue, 12.5f, false));
     }
 
     @Test
     void twoDifferentPlayersProduceDifferentGibberish() {
         UUID a = UUID.randomUUID();
         UUID b = UUID.randomUUID();
-        List<String> linesA = FakeChatStream.lines(cue(a, 200), 5f);
-        List<String> linesB = FakeChatStream.lines(cue(b, 200), 5f);
+        List<String> linesA = FakeChatStream.lines(cue(a, 200), 5f, false);
+        List<String> linesB = FakeChatStream.lines(cue(b, 200), 5f, false);
         org.junit.jupiter.api.Assertions.assertNotEquals(linesA, linesB);
     }
 
@@ -71,7 +71,7 @@ class FakeChatStreamTest {
         boolean sawGrowth = false;
         boolean sawWrap = false;
         for (float seconds = 0f; seconds <= 10f; seconds += 0.05f) {
-            List<String> lines = FakeChatStream.lines(cue, seconds);
+            List<String> lines = FakeChatStream.lines(cue, seconds, false);
             String inProgress = lines.get(lines.size() - 1);
             int length = inProgress.length();
             assertTrue(length <= FakeChatStream.MAX_LINE_LENGTH,
@@ -99,7 +99,7 @@ class FakeChatStreamTest {
         for (int intensity : new int[] {0, 64, 128, 200, 255}) {
             PlayerCue cue = cue(id, intensity);
             for (float seconds = 0f; seconds <= 30f; seconds += 0.7f) {
-                for (String line : FakeChatStream.lines(cue, seconds)) {
+                for (String line : FakeChatStream.lines(cue, seconds, false)) {
                     if (line.isEmpty()) {
                         continue;
                     }
@@ -116,7 +116,7 @@ class FakeChatStreamTest {
         UUID id = UUID.randomUUID();
         PlayerCue cue = cue(id, 180);
         for (float seconds = 0f; seconds <= 25f; seconds += 0.6f) {
-            for (String line : FakeChatStream.lines(cue, seconds)) {
+            for (String line : FakeChatStream.lines(cue, seconds, false)) {
                 assertTrue(ONLY_LOWERCASE_AND_SPACE.matcher(line).matches(),
                         "line contains something other than [a-z ]: [" + line + "]");
             }
@@ -141,8 +141,8 @@ class FakeChatStreamTest {
         PlayerCue fast = cue(id, 255);
         float seconds = 1.5f;
 
-        int slowColumn = FakeChatStream.caretColumn(slow, seconds);
-        int fastColumn = FakeChatStream.caretColumn(fast, seconds);
+        int slowColumn = FakeChatStream.caretColumn(slow, seconds, false);
+        int fastColumn = FakeChatStream.caretColumn(fast, seconds, false);
 
         assertTrue(fastColumn > slowColumn,
                 "expected higher intensity to type more characters by t=" + seconds
@@ -154,7 +154,7 @@ class FakeChatStreamTest {
         UUID id = UUID.randomUUID();
         PlayerCue cue = cue(id, 255);
         for (float seconds = 0f; seconds <= 20f; seconds += 0.13f) {
-            int column = FakeChatStream.caretColumn(cue, seconds);
+            int column = FakeChatStream.caretColumn(cue, seconds, false);
             assertTrue(column >= 0 && column < FakeChatStream.MAX_LINE_LENGTH,
                     "caretColumn out of range at seconds=" + seconds + ": " + column);
         }
@@ -165,10 +165,70 @@ class FakeChatStreamTest {
         UUID id = UUID.randomUUID();
         PlayerCue cue = cue(id, 128);
         for (float seconds : new float[] {0f, -1f, -1000f}) {
-            List<String> lines = FakeChatStream.lines(cue, seconds);
+            List<String> lines = FakeChatStream.lines(cue, seconds, false);
             assertEquals(FakeChatStream.VISIBLE_LINES, lines.size());
-            int column = FakeChatStream.caretColumn(cue, seconds);
+            int column = FakeChatStream.caretColumn(cue, seconds, false);
             assertTrue(column >= 0 && column < FakeChatStream.MAX_LINE_LENGTH);
+        }
+    }
+
+    // ------------------------------------------------- reducedMotion (P6 §4.1)
+
+    /**
+     * P6 §4.1: "a single stable frame; no scrolling" — {@code seconds} must
+     * stop mattering entirely once {@code reducedMotion} is set, at every
+     * intensity (cadence would otherwise still leak through into how many
+     * characters have "typed").
+     */
+    @Test
+    void reducedMotionLinesAreStableAcrossTimeAndIntensity() {
+        UUID id = UUID.randomUUID();
+        for (int intensity : new int[] {0, 128, 255}) {
+            PlayerCue cue = cue(id, intensity);
+            List<String> reference = FakeChatStream.lines(cue, 0f, true);
+            for (float seconds : new float[] {0f, 1f, 12.5f, 400f, 9000f}) {
+                assertEquals(reference, FakeChatStream.lines(cue, seconds, true),
+                        "intensity=" + intensity + " seconds=" + seconds);
+            }
+        }
+    }
+
+    @Test
+    void reducedMotionCaretColumnIsStableAcrossTimeAndIntensity() {
+        UUID id = UUID.randomUUID();
+        for (int intensity : new int[] {0, 128, 255}) {
+            PlayerCue cue = cue(id, intensity);
+            int reference = FakeChatStream.caretColumn(cue, 0f, true);
+            for (float seconds : new float[] {0f, 1f, 12.5f, 400f, 9000f}) {
+                assertEquals(reference, FakeChatStream.caretColumn(cue, seconds, true),
+                        "intensity=" + intensity + " seconds=" + seconds);
+            }
+        }
+    }
+
+    /**
+     * The reducedMotion frame must still be a real, in-range snapshot — not an
+     * empty panel (see {@link FakeChatStream}'s Javadoc on why the frozen
+     * count is deliberately mid-line, not zero) and not out of bounds.
+     */
+    @Test
+    void reducedMotionCaretColumnStaysInRangeAndIsNonZero() {
+        UUID id = UUID.randomUUID();
+        PlayerCue cue = cue(id, 128);
+        int column = FakeChatStream.caretColumn(cue, 7f, true);
+        assertTrue(column > 0 && column < FakeChatStream.MAX_LINE_LENGTH,
+                "expected a nonzero, in-range frozen column, was " + column);
+    }
+
+    @Test
+    void reducedMotionStillReturnsExactlyVisibleLinesEntriesAndInRangeText() {
+        UUID id = UUID.randomUUID();
+        PlayerCue cue = cue(id, 200);
+        List<String> lines = FakeChatStream.lines(cue, 7f, true);
+        assertEquals(FakeChatStream.VISIBLE_LINES, lines.size());
+        for (String line : lines) {
+            assertTrue(ONLY_LOWERCASE_AND_SPACE.matcher(line).matches(),
+                    "line contains something other than [a-z ]: [" + line + "]");
         }
     }
 

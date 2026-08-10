@@ -34,9 +34,9 @@ class CueIconMotionTest {
             PlayerCue cue = cue(id, activity);
             for (float seconds = 0f; seconds <= 6f; seconds += 0.7f) {
                 float ageTicks = seconds * 20f;
-                assertEquals(0f, CueIconMotion.bobBlocks(cue, ageTicks), 0f,
+                assertEquals(0f, CueIconMotion.bobBlocks(cue, ageTicks, false), 0f,
                         "expected zero bob for " + activity + " at t=" + seconds);
-                assertEquals(0f, CueIconMotion.tiltRadians(cue, ageTicks), 0f,
+                assertEquals(0f, CueIconMotion.tiltRadians(cue, ageTicks, false), 0f,
                         "expected zero tilt for " + activity + " at t=" + seconds);
             }
         }
@@ -51,8 +51,8 @@ class CueIconMotionTest {
         boolean sawNonZeroTilt = false;
         for (float seconds = 0f; seconds <= 20f; seconds += 0.1f) {
             float ageTicks = seconds * 20f;
-            float bob = CueIconMotion.bobBlocks(cue, ageTicks);
-            float tilt = CueIconMotion.tiltRadians(cue, ageTicks);
+            float bob = CueIconMotion.bobBlocks(cue, ageTicks, false);
+            float tilt = CueIconMotion.tiltRadians(cue, ageTicks, false);
 
             assertTrue(Math.abs(bob) <= BOB_BOUND_BLOCKS, "bob out of bounds at t=" + seconds + ": " + bob);
             assertTrue(Math.abs(tilt) <= TILT_BOUND_RADIANS, "tilt out of bounds at t=" + seconds + ": " + tilt);
@@ -75,8 +75,8 @@ class CueIconMotionTest {
         PlayerCue cue = cue(id, Activity.AFK);
         float ageTicks = 733.25f;
 
-        assertEquals(CueIconMotion.bobBlocks(cue, ageTicks), CueIconMotion.bobBlocks(cue, ageTicks), 0f);
-        assertEquals(CueIconMotion.tiltRadians(cue, ageTicks), CueIconMotion.tiltRadians(cue, ageTicks), 0f);
+        assertEquals(CueIconMotion.bobBlocks(cue, ageTicks, false), CueIconMotion.bobBlocks(cue, ageTicks, false), 0f);
+        assertEquals(CueIconMotion.tiltRadians(cue, ageTicks, false), CueIconMotion.tiltRadians(cue, ageTicks, false), 0f);
     }
 
     /**
@@ -101,15 +101,34 @@ class CueIconMotionTest {
         boolean sawTiltDifference = false;
         for (float seconds = 0f; seconds <= 20f; seconds += 0.1f) {
             float ageTicks = seconds * 20f;
-            if (Math.abs(CueIconMotion.bobBlocks(cueA, ageTicks) - CueIconMotion.bobBlocks(cueB, ageTicks)) > 1e-4f) {
+            if (Math.abs(CueIconMotion.bobBlocks(cueA, ageTicks, false) - CueIconMotion.bobBlocks(cueB, ageTicks, false)) > 1e-4f) {
                 sawBobDifference = true;
             }
-            if (Math.abs(CueIconMotion.tiltRadians(cueA, ageTicks) - CueIconMotion.tiltRadians(cueB, ageTicks)) > 1e-4f) {
+            if (Math.abs(CueIconMotion.tiltRadians(cueA, ageTicks, false) - CueIconMotion.tiltRadians(cueB, ageTicks, false)) > 1e-4f) {
                 sawTiltDifference = true;
             }
         }
         assertTrue(sawBobDifference, "expected two different players' sleep bob to diverge somewhere in a 20s window");
         assertTrue(sawTiltDifference, "expected two different players' sleep tilt to diverge somewhere in a 20s window");
+    }
+
+    /**
+     * P6 §4.1: {@code reducedMotion} must zero the sine term entirely, not
+     * merely dampen it — AFK is the one activity that is otherwise nonzero
+     * (see {@link #nonZeroAndBoundedForAfk}), so it is the only case that can
+     * actually distinguish "zeroed" from "coincidentally near zero".
+     */
+    @Test
+    void reducedMotionIsAlwaysZeroEvenForAfk() {
+        UUID id = UUID.randomUUID();
+        PlayerCue cue = cue(id, Activity.AFK);
+        for (float seconds = 0f; seconds <= 20f; seconds += 0.37f) {
+            float ageTicks = seconds * 20f;
+            assertEquals(0f, CueIconMotion.bobBlocks(cue, ageTicks, true), 0f,
+                    "expected zero bob under reducedMotion at t=" + seconds);
+            assertEquals(0f, CueIconMotion.tiltRadians(cue, ageTicks, true), 0f,
+                    "expected zero tilt under reducedMotion at t=" + seconds);
+        }
     }
 
     private static PlayerCue cue(UUID id, Activity activity) {

@@ -104,6 +104,7 @@ public final class ClientConfigIo {
                 getBoolean(root, "showOnSelf", d.showOnSelf()),
                 getBoolean(root, "reducedMotion", d.reducedMotion()),
                 getBoolean(root, "textOnly", d.textOnly()),
+                getBoolean(root, "shareNothing", d.shareNothing()),
                 getBoolean(root, "shareTyping", d.shareTyping()),
                 getBoolean(root, "shareScreens", d.shareScreens()),
                 getBoolean(root, "shareScreenDetail", d.shareScreenDetail()),
@@ -123,6 +124,7 @@ public final class ClientConfigIo {
         root.addProperty("showOnSelf", data.showOnSelf());
         root.addProperty("reducedMotion", data.reducedMotion());
         root.addProperty("textOnly", data.textOnly());
+        root.addProperty("shareNothing", data.shareNothing());
         root.addProperty("shareTyping", data.shareTyping());
         root.addProperty("shareScreens", data.shareScreens());
         root.addProperty("shareScreenDetail", data.shareScreenDetail());
