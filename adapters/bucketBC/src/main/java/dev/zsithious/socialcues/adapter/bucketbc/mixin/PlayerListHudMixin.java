@@ -1,4 +1,4 @@
-package dev.zsithious.socialcues.adapter.bucketd.mixin;
+package dev.zsithious.socialcues.adapter.bucketbc.mixin;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -103,9 +103,12 @@ public class PlayerListHudMixin {
             if (entry == null || entry.getProfile() == null) {
                 return;
             }
-            // javap -c-verified (1.21.11): com.mojang.authlib.GameProfile exposes
-            // id()/name(), not the older getId()/getName() (authlib went record-style).
-            UUID id = entry.getProfile().id();
+            // javap-verified over the authlib each row resolves: 1.21-1.21.8 ship
+            // authlib 6.x, whose GameProfile still has the getter-style getId()/
+            // getName(). 7.x (1.21.9+, i.e. bucket D) renamed them to id()/name()
+            // and removed the old spellings, which is why this line differs from
+            // bucketD's — one of only two divergences in this whole file.
+            UUID id = entry.getProfile().getId();
             // Katman 2 (tab list): near tier if we have it, else the coarse
             // global tier — see RemoteCueStore.tabCueOf's own Javadoc for why
             // this is deliberately not cueOf (that one is world-render-only,
@@ -116,7 +119,7 @@ public class PlayerListHudMixin {
             }
             PlayerCue cue = cueOpt.get();
             ClientConfigData config = ClientConfigState.get();
-            if (!TabListCueVisibility.shouldRenderIcon(cue, config, entry.getProfile().name())) {
+            if (!TabListCueVisibility.shouldRenderIcon(cue, config, entry.getProfile().getName())) {
                 return;
             }
 
@@ -124,13 +127,10 @@ public class PlayerListHudMixin {
             // Right-aligned within the row's reserved column, immediately left of the
             // 10px-wide ping icon (renderLatencyIcon draws it at x + width - 11).
             int iconX = x + width - 11 - GAP_BEFORE_PING_ICON - ICON_SIZE;
-            // This bucket's own rows all spell the draw the same way, so the compat
-            // hop buys bucket D nothing on its own — it is here so that Layer 2's
-            // draw has exactly one home across all twelve rows, and so that every
-            // compat generation carries the same three classes (the invariant this
-            // package's package-info states). The body CueGuiIcons runs for these
-            // rows is verbatim the drawTexturedQuad call that used to sit here,
-            // corner order and all; see its Javadoc for the P4b bug that order cost.
+            // The one call in this bucket that is not the same on all seven of its
+            // rows, hence the compat hop — see CueGuiIcons' Javadoc for the measured
+            // three-way split (1.21 / 1.21.2 / 1.21.6) and for why it made buckets B
+            // and C collapse into this single one instead of forking ~1500 lines.
             CueGuiIcons.drawAtlasCell(context, CUES_TEXTURE, cell, iconX, y, ICON_SIZE);
         } catch (Throwable t) {
             socialcues$disabledByError = true;

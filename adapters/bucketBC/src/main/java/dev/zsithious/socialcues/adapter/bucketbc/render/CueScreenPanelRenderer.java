@@ -1,4 +1,4 @@
-package dev.zsithious.socialcues.adapter.bucketd.render;
+package dev.zsithious.socialcues.adapter.bucketbc.render;
 
 import java.util.List;
 import java.util.Optional;
@@ -23,7 +23,7 @@ import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.network.PlayerListEntry;
 import net.minecraft.client.render.OverlayTexture;
 import net.minecraft.client.render.VertexConsumer;
-import net.minecraft.client.render.command.OrderedRenderCommandQueue;
+import net.minecraft.client.render.VertexConsumerProvider;
 import net.minecraft.client.render.entity.state.PlayerEntityRenderState;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.text.Text;
@@ -41,7 +41,7 @@ import net.minecraft.util.math.RotationAxis;
  * <p><b>Hook — same space as Layer 1, not a {@code FeatureRenderer}, and not
  * a new mixin.</b> This is called from the tail of {@code
  * PlayerEntityRenderer#renderLabelIfPresent} — the exact same injection
- * point {@code adapter.bucketd.mixin.PlayerEntityRendererMixin}'s {@code
+ * point {@code adapter.bucketbc.mixin.PlayerEntityRendererMixin}'s {@code
  * socialcues$drawBillboard} already uses to call {@link CueBillboardRenderer}.
  * {@link CueBillboardRenderer}'s own class Javadoc has the full {@code
  * javap}-verified account of why: a {@code FeatureRenderer} is handed the
@@ -241,12 +241,13 @@ public final class CueScreenPanelRenderer {
     }
 
     /** Backstop around {@link #render}, same stance as {@code CueBillboardRenderer.renderGuarded}. */
-    public static void renderGuarded(PlayerEntityRenderState state, MatrixStack matrices, OrderedRenderCommandQueue queue) {
+    public static void renderGuarded(PlayerEntityRenderState state, MatrixStack matrices,
+            VertexConsumerProvider vertexConsumers, int light) {
         if (disabledByError) {
             return;
         }
         try {
-            render(state, matrices, queue);
+            render(state, matrices, vertexConsumers, light);
         } catch (Throwable t) {
             disabledByError = true;
             LOGGER.log(Level.SEVERE, "socialcues: layer 3 held-panel rendering threw and has been disabled "
@@ -254,7 +255,8 @@ public final class CueScreenPanelRenderer {
         }
     }
 
-    private static void render(PlayerEntityRenderState state, MatrixStack matrices, OrderedRenderCommandQueue queue) {
+    private static void render(PlayerEntityRenderState state, MatrixStack matrices,
+            VertexConsumerProvider vertexConsumers, int light) {
         UUID id = ((CueUuidHolder) (Object) state).socialcues$getUuid();
         if (id == null) {
             return; // Not captured for this state (e.g. a render state our PlayerEntityRendererMixin hook never saw).
@@ -298,7 +300,7 @@ public final class CueScreenPanelRenderer {
             return;
         }
 
-        drawPanel(state, matrices, queue, blend.cue(), frame, alpha);
+        drawPanel(state, matrices, vertexConsumers, light, blend.cue(), frame, alpha);
     }
 
     private static String resolvePlayerName(MinecraftClient client, UUID id) {
@@ -309,12 +311,14 @@ public final class CueScreenPanelRenderer {
         if (entry == null || entry.getProfile() == null) {
             return "";
         }
-        return entry.getProfile().name(); // javap-verified (see CueBillboardRenderer/PlayerListHudMixin): name(), not getName().
+        // getName(), not name(): this bucket's rows ship authlib 6.x — see
+        // adapter.bucketbc.mixin.PlayerListHudMixin for the measurement.
+        return entry.getProfile().getName();
     }
 
     /** See the class Javadoc for the full derivation of this transform. */
-    private static void drawPanel(PlayerEntityRenderState state, MatrixStack matrices, OrderedRenderCommandQueue queue,
-            PlayerCue cue, PoseFrame frame, float alpha) {
+    private static void drawPanel(PlayerEntityRenderState state, MatrixStack matrices,
+            VertexConsumerProvider vertexConsumers, int light, PlayerCue cue, PoseFrame frame, float alpha) {
         matrices.push();
         matrices.translate(0f, frame.screenRise(), 0f);
         matrices.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(-state.bodyYaw));
@@ -322,8 +326,8 @@ public final class CueScreenPanelRenderer {
         matrices.multiply(RotationAxis.POSITIVE_X.rotation(frame.screenTilt()));
 
         switch (cue.activity()) {
-            case TYPING_CHAT, TYPING_COMMAND, TYPING_SIGN, TYPING_BOOK -> drawChatPanel(matrices, queue, state, cue, alpha);
-            case IN_SCREEN -> drawContainerPanel(matrices, queue, state, cue, alpha);
+            case TYPING_CHAT, TYPING_COMMAND, TYPING_SIGN, TYPING_BOOK -> drawChatPanel(matrices, vertexConsumers, light, state, cue, alpha);
+            case IN_SCREEN -> drawContainerPanel(matrices, vertexConsumers, light, state, cue, alpha);
             // Unreachable: frame.hasScreen() already filtered out NORMAL/AFK/SPEAKING
             // (PoseAnimator never sets screenWeight > 0 for them). Kept exhaustive
             // anyway, CueIconAtlas.cellFor's precedent: a future Activity added to
@@ -350,11 +354,11 @@ public final class CueScreenPanelRenderer {
      * method's own Javadoc) — and is drawn as {@link #drawNeutralPanel}'s
      * flat fill instead.
      */
-    private static void drawContainerPanel(MatrixStack matrices, OrderedRenderCommandQueue queue,
+    private static void drawContainerPanel(MatrixStack matrices, VertexConsumerProvider vertexConsumers, int light,
             PlayerEntityRenderState state, PlayerCue cue, float alpha) {
         Optional<ScreenPanelTextures.Texture> textureOpt = ScreenPanelTextures.forScreenKind(cue.screen());
         if (textureOpt.isEmpty()) {
-            drawNeutralPanel(matrices, queue, state, alpha);
+            drawNeutralPanel(matrices, vertexConsumers, light, state, alpha);
             return;
         }
         ScreenPanelTextures.Texture texture = textureOpt.get();
@@ -389,9 +393,9 @@ public final class CueScreenPanelRenderer {
             float minV = (float) band.v() / texture.canvasHeight();
             float maxV = (float) (band.v() + band.height()) / texture.canvasHeight();
 
-            queue.submitCustom(matrices, CueRenderLayers.entityTranslucent(textureId), (entry, vertices) ->
-                    emitQuad(entry, vertices, left, right, top, bottom, minU, maxU, minV, maxV,
-                            state.light, 255, 255, 255, alphaByte));
+            VertexConsumer vertices = vertexConsumers.getBuffer(CueRenderLayers.entityTranslucent(textureId));
+            emitQuad(matrices.peek(), vertices, left, right, top, bottom, minU, maxU, minV, maxV,
+                    light, 255, 255, 255, alphaByte);
         }
     }
 
@@ -409,18 +413,18 @@ public final class CueScreenPanelRenderer {
      * only the container identity is unknown, so the panel is present but
      * blank rather than absent.
      */
-    private static void drawNeutralPanel(MatrixStack matrices, OrderedRenderCommandQueue queue,
+    private static void drawNeutralPanel(MatrixStack matrices, VertexConsumerProvider vertexConsumers, int light,
             PlayerEntityRenderState state, float alpha) {
         float halfWidth = CONTAINER_WIDTH_BLOCKS / 2f;
         float halfHeight = NEUTRAL_PANEL_HEIGHT_BLOCKS / 2f;
         int bgAlphaByte = Math.round(alpha * CHAT_BG_MAX_ALPHA * 255f);
 
-        queue.submitCustom(matrices, CueRenderLayers.entityTranslucent(PANEL_FILL_TEXTURE), (entry, vertices) ->
-                emitQuad(entry, vertices, -halfWidth, halfWidth, halfHeight, -halfHeight, 0f, 1f, 0f, 1f, state.light,
-                        CHAT_BG_R, CHAT_BG_G, CHAT_BG_B, bgAlphaByte));
+        VertexConsumer vertices = vertexConsumers.getBuffer(CueRenderLayers.entityTranslucent(PANEL_FILL_TEXTURE));
+        emitQuad(matrices.peek(), vertices, -halfWidth, halfWidth, halfHeight, -halfHeight, 0f, 1f, 0f, 1f, light,
+                CHAT_BG_R, CHAT_BG_G, CHAT_BG_B, bgAlphaByte);
     }
 
-    private static void drawChatPanel(MatrixStack matrices, OrderedRenderCommandQueue queue,
+    private static void drawChatPanel(MatrixStack matrices, VertexConsumerProvider vertexConsumers, int light,
             PlayerEntityRenderState state, PlayerCue cue, float alpha) {
         float halfWidth = CHAT_WIDTH_BLOCKS / 2f;
         float halfHeight = CHAT_HEIGHT_BLOCKS / 2f;
@@ -428,14 +432,14 @@ public final class CueScreenPanelRenderer {
 
         // No container texture (task requirement) -- a flat, semi-transparent
         // quad sampling our own solid-white fill, tinted dark by vertex colour.
-        queue.submitCustom(matrices, CueRenderLayers.entityTranslucent(PANEL_FILL_TEXTURE), (entry, vertices) ->
-                emitQuad(entry, vertices, -halfWidth, halfWidth, halfHeight, -halfHeight, 0f, 1f, 0f, 1f, state.light,
-                        CHAT_BG_R, CHAT_BG_G, CHAT_BG_B, bgAlphaByte));
+        VertexConsumer vertices = vertexConsumers.getBuffer(CueRenderLayers.entityTranslucent(PANEL_FILL_TEXTURE));
+        emitQuad(matrices.peek(), vertices, -halfWidth, halfWidth, halfHeight, -halfHeight, 0f, 1f, 0f, 1f, light,
+                CHAT_BG_R, CHAT_BG_G, CHAT_BG_B, bgAlphaByte);
 
-        drawChatText(matrices, queue, state, cue, alpha);
+        drawChatText(matrices, vertexConsumers, light, state, cue, alpha);
     }
 
-    private static void drawChatText(MatrixStack matrices, OrderedRenderCommandQueue queue,
+    private static void drawChatText(MatrixStack matrices, VertexConsumerProvider vertexConsumers, int light,
             PlayerEntityRenderState state, PlayerCue cue, float alpha) {
         MinecraftClient client = MinecraftClient.getInstance();
         TextRenderer textRenderer = client.textRenderer;
@@ -518,8 +522,9 @@ public final class CueScreenPanelRenderer {
             if (line.isEmpty()) {
                 continue;
             }
-            queue.submitText(matrices, 0f, i * lineHeightPx, Text.literal(line).asOrderedText(), false,
-                    TextRenderer.TextLayerType.NORMAL, state.light, colorWithAlpha, 0, 0);
+            textRenderer.draw(Text.literal(line).asOrderedText(), 0f, i * lineHeightPx, colorWithAlpha, false,
+                    matrices.peek().getPositionMatrix(), vertexConsumers,
+                    TextRenderer.TextLayerType.NORMAL, 0, light);
         }
         matrices.pop();
     }

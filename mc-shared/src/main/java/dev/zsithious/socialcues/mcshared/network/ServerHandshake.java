@@ -79,7 +79,15 @@ public final class ServerHandshake {
             if (message instanceof ClientHello clientHello) {
                 ServerPlayerEntity player = context.player();
                 if (clientHello.protoVersion() != ProtocolConstants.VERSION) {
-                    LOGGER.info("socialcues: " + player.getGameProfile().name()
+                    // DESIGN.md §7 P7: the player's name for a log line comes from
+                    // Entity#getName(), not from getGameProfile(). authlib renamed
+                    // GameProfile's accessors to record style (getName()/getId() ->
+                    // name()/id()) between the 6.x that 1.21-1.21.8 ship and the 7.x+
+                    // that 1.21.9+ ship, removing the old names — so no single
+                    // spelling compiles across the twelve rows this file serves.
+                    // Entity#getName() is javap-verified identical on all twelve, and
+                    // for two log lines it is the better question anyway.
+                    LOGGER.info("socialcues: " + player.getName().getString()
                             + " sent ClientHello with protocol version " + clientHello.protoVersion()
                             + " (server is " + ProtocolConstants.VERSION + ")");
                 }
@@ -122,7 +130,7 @@ public final class ServerHandshake {
                 DEFAULT_NEAR_RADIUS);
         ServerPlayNetworking.send(player, new SocialCuesPayload(S2CMessages.encode(hello)));
         if (greeted.add(player.getUuid())) {
-            LOGGER.info("socialcues: handshake with " + player.getGameProfile().name()
+            LOGGER.info("socialcues: handshake with " + player.getName().getString()
                     + " complete (" + reason + ")");
         }
     }

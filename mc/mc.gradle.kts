@@ -23,24 +23,28 @@ val row = versionRows.first { it["mc"] == mcVersion }
 val yarnMappings = row["yarn"] as String
 val fabricApiVersion = row["fabricApi"] as String
 
-// P6 (config UI) deps. Absent on a row = "this Minecraft version has no
-// config-UI dependency pinned yet", which is currently every row except
-// 1.21.11 — DESIGN.md §14's order is deliberate: 1.21.11 goes end-to-end
-// first (P0–P6), the other eleven rows follow in P7. Absent is silence, not
-// a default: guessing a ModMenu/Cloth version for a row nobody has built
-// against would produce a build that resolves and then fails in ways that
-// look like our bug. When P7 fills these in, note that neither project's
-// version number tracks Minecraft's in a form you can compute — ModMenu
-// 17.0.0 is 1.21.11's, while its Maven "latest" was 20.0.1 at the time of
-// writing (a newer Minecraft's) — so every row must be looked up against
-// the Modrinth API's game_versions filter, exactly like the fabricApi
-// column already was.
+// P6 (config UI) deps, filled in for all twelve rows by P7. Neither project's
+// version number tracks Minecraft's in a form you can compute — ModMenu 17.0.0
+// is 1.21.11's while its Maven "latest" was a newer Minecraft's — so each row
+// was looked up against the Modrinth API's `game_versions` filter, exactly like
+// the fabricApi column, taking the newest `release` (never a beta: filtering by
+// game version alone would have pinned 1.21.11 to ModMenu 17.0.1-beta.1). The
+// method is self-checking — re-running it on 1.21.11 reproduces the 17.0.0 /
+// 21.11.153 pair P6 had already found by hand.
+//
+// Still nullable rather than required: absent is silence, not a default. A
+// guessed version for a row nobody has built against would resolve and then
+// fail in ways that look like our bug.
 val modMenuVersion = row["modMenu"] as String?
 val clothConfigVersion = row["clothConfig"] as String?
 // Cloth's own library split: me.shedaniel.math.Rectangle and friends live in a
 // separate mod (cloth-basic-math), which Cloth ships as a nested jar and also
 // declares as a POM dependency. See the dependency block below for why this
-// row has to name it explicitly instead of inheriting it.
+// row has to name it explicitly instead of inheriting it. P7 read the value
+// for every row out of that row's own cloth-config-fabric POM rather than
+// copying 1.21.11's downward; all seven distinct Cloth releases the twelve
+// rows use happen to declare basic-math 0.6.1, but that is an observation, not
+// a rule the next Cloth release is bound by.
 val basicMathVersion = row["basicMath"] as String?
 
 // The three columns are one feature, so they are pinned together or not at all.
@@ -60,6 +64,19 @@ val configUiEnabled = clothConfigVersion != null
 val loomVersionForRow = row["loom"] as String
 val bucket = row["bucket"] as String
 val loaderVersion = providers.gradleProperty("loader_version").get()
+
+// DESIGN.md §7 "P7 uygulama notu" — the second version axis. `bucket` groups
+// rows by *render* generation; `compat` groups them by the seams that fall
+// somewhere else, including two that sit in mc-shared, which has no bucket at
+// all. Measured, not assumed: the keyboard-event seam is at 1.21.9 and the
+// render-layer rename is at 1.21.11, so these are genuinely not the bucket
+// boundaries. See adapters/compat/'s package-info.java.
+val compat = row["compat"] as String
+require(rootProject.file("adapters/compat/$compat").isDirectory) {
+    "versions.json row for $mcVersion names compat generation '$compat', but " +
+        "adapters/compat/$compat/ does not exist. Every row must name one of the " +
+        "directories under adapters/compat/ — see that package's package-info.java."
+}
 
 val bucketDirName = "bucket$bucket"
 
@@ -200,6 +217,14 @@ sourceSets {
         java {
             srcDir(rootProject.file("mc-shared/src/main/java"))
             srcDir(rootProject.file("adapters/$bucketDirName/src/main/java"))
+            // The compat layer (DESIGN.md §7 P7). Deliberately added *before*
+            // nothing and after nothing in particular — all three source dirs
+            // compile as one unit, which is exactly what lets mc-shared call
+            // adapter.compat classes without any project dependency: the
+            // classes are simply on the same javac invocation. Only ever one
+            // compat generation is on the path, so the fixed class names
+            // adapter.compat.* resolve unambiguously.
+            srcDir(rootProject.file("adapters/compat/$compat/src/main/java"))
             // DESIGN.md §14 P6. Unlike the buckets this directory is not
             // version-specific — Cloth's builder API is stable across 1.21.x —
             // it is *dependency*-specific: it is the only source that imports
@@ -289,6 +314,10 @@ val checkNoTextAccess by tasks.registering {
     val sourceDirs = listOfNotNull(
         rootProject.file("mc-shared/src"),
         rootProject.file("adapters/$bucketDirName/src"),
+        // The compat layer is client source like any other, and is in fact the
+        // one place a raw key event is handled at all — so it gets the same
+        // guarantee, not an exemption (see TypingKeyEvents' privacy note).
+        rootProject.file("adapters/compat/$compat/src"),
         // The config UI is client source like any other and gets the same
         // guarantee — a text field on a config screen is still a text field.
         rootProject.file("integrations/configui/src").takeIf { configUiEnabled }

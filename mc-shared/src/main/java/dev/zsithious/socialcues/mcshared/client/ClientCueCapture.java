@@ -5,6 +5,7 @@ import java.util.Optional;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+import dev.zsithious.socialcues.adapter.compat.TypingKeyEvents;
 import dev.zsithious.socialcues.core.client.CommandDraftDetector;
 import dev.zsithious.socialcues.core.client.CueSampler;
 import dev.zsithious.socialcues.core.client.ScreenKindMapper;
@@ -26,7 +27,6 @@ import dev.zsithious.socialcues.mcshared.network.SocialCuesPayload;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
-import net.fabricmc.fabric.api.client.screen.v1.ScreenKeyboardEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.ChatScreen;
 import net.minecraft.client.gui.screen.GameMenuScreen;
@@ -37,7 +37,6 @@ import net.minecraft.client.gui.screen.ingame.BookEditScreen;
 import net.minecraft.client.gui.screen.ingame.CreativeInventoryScreen;
 import net.minecraft.client.gui.screen.ingame.HandledScreen;
 import net.minecraft.client.gui.screen.option.OptionsScreen;
-import net.minecraft.client.input.KeyInput;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.client.option.GameOptions;
 import net.minecraft.registry.Registries;
@@ -45,7 +44,6 @@ import net.minecraft.screen.PlayerScreenHandler;
 import net.minecraft.screen.ScreenHandler;
 import net.minecraft.screen.ScreenHandlerType;
 import net.minecraft.util.Identifier;
-import net.minecraft.util.PlayerInput;
 
 import org.lwjgl.glfw.GLFW;
 
@@ -210,23 +208,32 @@ public final class ClientCueCapture {
             return;
         }
         boolean isChat = screen instanceof ChatScreen;
-        ScreenKeyboardEvents.afterKeyPress(screen).register((s, key) -> onTypingKeyPress(key, isChat));
+        // DESIGN.md §7 P7: registered through the compat layer, not through
+        // ScreenKeyboardEvents directly. fabric-screen-api-v1 changed the
+        // callback from (Screen, int key, int scancode, int modifiers) to
+        // (Screen, KeyInput) at its 3.x release — the one 1.21.9+ resolves —
+        // and this file is compiled by all twelve rows, so it can name neither
+        // shape. adapter.compat.TypingKeyEvents normalises both to the GLFW key
+        // code, which is the only thing below ever wanted.
+        TypingKeyEvents.afterKeyPress(screen, keyCode -> onTypingKeyPress(keyCode, isChat));
     }
 
-    private static void onTypingKeyPress(KeyInput key, boolean isChat) {
+    private static void onTypingKeyPress(int keyCode, boolean isChat) {
         long now = System.currentTimeMillis();
         IDLE_TIMER.recordActivity(now);
         if (!hasBit(currentEffectiveBits(), PolicyBits.TYPING)) {
             return;
         }
         // DESIGN.md §10.1: only "a keystroke happened, and was it the slash
-        // key" is ever observed here — KeyInput carries a keycode, never the
-        // field's text (see the class Javadoc and CommandDraftDetector for
-        // why that distinction matters and checkNoTextAccess for how it's
-        // enforced mechanically).
+        // key" is ever observed here — a GLFW key code, never the field's text
+        // (see the class Javadoc and CommandDraftDetector for why that
+        // distinction matters and checkNoTextAccess for how it's enforced
+        // mechanically). The compat layer deliberately hands over the code
+        // alone rather than the platform event object, so this is the only
+        // shape available here even by accident.
         TYPING_RATE.recordKeystroke(now);
         if (isChat) {
-            COMMAND_DRAFT.onKeyPress(key.key() == GLFW.GLFW_KEY_SLASH);
+            COMMAND_DRAFT.onKeyPress(keyCode == GLFW.GLFW_KEY_SLASH);
         }
     }
 
@@ -459,11 +466,30 @@ public final class ClientCueCapture {
 
     private static void recordInputActivity(MinecraftClient client, long nowMs) {
         ClientPlayerEntity player = client.player;
-        PlayerInput input = player.getLastPlayerInput();
-        boolean keyHeld = input.forward() || input.backward() || input.left() || input.right()
-                || input.jump() || input.sneak() || input.sprint();
-
         GameOptions options = client.options;
+
+        // DESIGN.md §7 P7. This used to read player.getLastPlayerInput(), which
+        // does not exist across the version range: net.minecraft.util.PlayerInput
+        // only appears in 1.21.2, and ClientPlayerEntity#getLastPlayerInput only
+        // in 1.21.6 (both javap-verified over all twelve mapped jars). Rather
+        // than shim two more seams, the movement keys are now read the same way
+        // the attack/use keys on the next line always were — GameOptions'
+        // KeyBinding fields, which javap confirms are present and identically
+        // named on every one of the twelve.
+        //
+        // Not merely equivalent, but the more direct question for this use:
+        // DESIGN.md §6 defines AFK as "no key/mouse/movement/look input", i.e.
+        // is the player *pressing* anything, which is precisely what
+        // KeyBinding#isPressed answers. PlayerInput was a record of the
+        // movement intent already sent to the server, one derivation further
+        // away. Both go false while a screen is open, and both go false when
+        // the player genuinely stops — the moved/looked checks below cover the
+        // remaining case (walking under momentum with no key held).
+        boolean keyHeld = options.forwardKey.isPressed() || options.backKey.isPressed()
+                || options.leftKey.isPressed() || options.rightKey.isPressed()
+                || options.jumpKey.isPressed() || options.sneakKey.isPressed()
+                || options.sprintKey.isPressed();
+
         boolean acting = options.attackKey.isPressed() || options.useKey.isPressed();
 
         double x = player.getX();

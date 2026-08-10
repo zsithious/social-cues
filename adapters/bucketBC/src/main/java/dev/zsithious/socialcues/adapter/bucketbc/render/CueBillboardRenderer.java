@@ -1,4 +1,4 @@
-package dev.zsithious.socialcues.adapter.bucketd.render;
+package dev.zsithious.socialcues.adapter.bucketbc.render;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -17,14 +17,15 @@ import dev.zsithious.socialcues.mcshared.client.LocalCueState;
 import dev.zsithious.socialcues.mcshared.client.RemoteCueStoreHolder;
 import dev.zsithious.socialcues.mcshared.config.ClientConfigState;
 
+import org.joml.Quaternionf;
+
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.network.PlayerListEntry;
 import net.minecraft.client.render.OverlayTexture;
 import net.minecraft.client.render.VertexConsumer;
-import net.minecraft.client.render.command.OrderedRenderCommandQueue;
+import net.minecraft.client.render.VertexConsumerProvider;
 import net.minecraft.client.render.entity.state.PlayerEntityRenderState;
-import net.minecraft.client.render.state.CameraRenderState;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
@@ -37,7 +38,7 @@ import net.minecraft.util.math.Vec3d;
  * <p><b>Hook (P4b düzeltmesi — see DESIGN.md §7's "Katman 1 hangi uzayda
  * çizilir" note):</b> this is called from the tail of
  * {@code PlayerEntityRenderer#renderLabelIfPresent}
- * ({@code adapter.bucketd.mixin.PlayerEntityRendererMixin}), <em>not</em> from
+ * ({@code adapter.bucketbc.mixin.PlayerEntityRendererMixin}), <em>not</em> from
  * a {@code FeatureRenderer}. P4b's first attempt used a feature renderer
  * registered through Fabric API — the hook DESIGN.md §7 prefers — but a
  * feature renderer is handed the <em>model</em> matrix stack, and
@@ -59,16 +60,28 @@ import net.minecraft.util.math.Vec3d;
  * {@code super.render}, which calls {@code renderLabelIfPresent} with the
  * clean, world-axis-aligned, camera-translated stack; and
  * {@code PlayerEntityRenderer}'s own override is balanced
- * ({@code push()} … {@code pop()}), so {@code @At("TAIL")} sees that same
- * clean stack. It also hands us the {@link CameraRenderState} vanilla itself
- * billboards labels with, rather than a separately-queried camera.
+ * ({@code push()} … {@code pop()}, re-verified on the 1.21.8 jar), so
+ * {@code @At("TAIL")} sees that same clean stack.
+ *
+ * <p><b>Bucket BC's camera:</b> 1.21.9's {@code CameraRenderState} — which
+ * bucket D receives as a hook parameter — does not exist in this range, so the
+ * billboard orientation is fetched instead of received. Vanilla's own label
+ * rendering in this range does exactly that ({@code javap -c},
+ * {@code EntityRenderer#renderLabelIfPresent}: {@code
+ * matrices.multiply(this.dispatcher.getRotation())} between the translate and
+ * the {@code scale(0.025f, -0.025f, 0.025f)}), so this class asks the same
+ * {@code EntityRenderDispatcher} for the same quaternion rather than
+ * inventing a camera query of its own.
  *
  * <p><b>Name-tag rule reuse (DESIGN.md §7: "vanilla isim etiketini çizecek
- * miydi diye soran predicate'e bağlan, kendi kopyanı çıkarma"):</b>
- * {@code renderLabelIfPresent} is called for every rendered player, label or
- * no label, so this class still gates on {@code displayName}/{@code
- * nameLabelPos} being non-null — {@code javap -c}-verified on
- * {@code EntityRenderer#updateRenderState}, they are set together from exactly
+ * miydi diye soran predicate'e bağlan, kendi kopyanı çıkarma"):</b> in this
+ * range {@code EntityRenderer#render} only calls {@code renderLabelIfPresent}
+ * when {@code displayName != null} ({@code javap -c}-verified; bucket D calls
+ * it unconditionally), but this class keeps its own {@code displayName}/{@code
+ * nameLabelPos} null checks anyway — they are simply redundant here rather
+ * than load-bearing, and keeping them means the two buckets' visibility rules
+ * cannot drift apart. Those two fields are set together — {@code javap
+ * -c}-verified on {@code EntityRenderer#updateRenderState} — from exactly
  * {@code Entity.shouldRenderName()} (team visibility included),
  * {@code hasCustomName()}/targeted-entity, and a
  * {@code squaredDistanceToCamera < 4096} (64 block) cutoff. One rule vanilla's
@@ -77,18 +90,21 @@ import net.minecraft.util.math.Vec3d;
  * vanilla name tag, and DESIGN.md §7 asks for the F1 rule too.
  *
  * <p><b>Drawing (DESIGN.md §7 / §11: vanilla buffer only, no custom GL
- * state):</b> 1.21.9+ replaced the {@code VertexConsumerProvider} entity
- * rendering used to pass around with {@link OrderedRenderCommandQueue}. The
- * still-vanilla, still-Sodium/Iris-safe equivalent is
- * {@link OrderedRenderCommandQueue#submitCustom}: it hands back a plain
- * {@link VertexConsumer} for a standard
- * {@link net.minecraft.client.render.RenderLayer}, into which this class emits
- * one ordinary textured quad — no shader, no raw GL call.
+ * state):</b> this is the {@link VertexConsumerProvider} generation, so the
+ * buffer is taken directly — {@link VertexConsumerProvider#getBuffer} for a
+ * standard {@link net.minecraft.client.render.RenderLayer}, into which this
+ * class emits one ordinary textured quad — no shader, no raw GL call. Bucket
+ * D reaches the same {@link VertexConsumer} through 1.21.9+'s {@code
+ * OrderedRenderCommandQueue#submitCustom} callback; everything downstream of
+ * obtaining it, {@link #emitQuad} and {@link #vertex} included, is identical
+ * in both buckets ({@code javap}-verified: {@code VertexConsumer}'s {@code
+ * vertex}/{@code color}/{@code texture}/{@code overlay}/{@code light}/{@code
+ * normal} surface is unchanged across the whole range).
  *
  * <p><b>P5b task 3 — {@link CueIconMotion}:</b> the icon's own small idle bob
  * (added to {@code rise}, so it moves along the same vertical axis the icon
  * is already placed on) and tilt (a roll about local {@code +Z} — the view
- * axis once {@code camera.orientation} has been multiplied in, see {@link
+ * axis once the camera orientation has been multiplied in, see {@link
  * #drawBillboard}) are applied unconditionally here, never gated on {@code
  * layer3Enabled}: this is Layer 1's own motion and DESIGN.md requires it to
  * keep working with the pose layer switched off (see {@link CueIconMotion}'s
@@ -166,12 +182,12 @@ public final class CueBillboardRenderer {
      * showing nothing.
      */
     public static void renderGuarded(PlayerEntityRenderState state, MatrixStack matrices,
-            OrderedRenderCommandQueue queue, CameraRenderState camera) {
+            VertexConsumerProvider vertexConsumers, int light) {
         if (disabledByError) {
             return;
         }
         try {
-            render(state, matrices, queue, camera);
+            render(state, matrices, vertexConsumers, light);
         } catch (Throwable t) {
             disabledByError = true;
             LOGGER.log(Level.SEVERE, "socialcues: layer 1 (billboard) rendering threw and has been disabled "
@@ -180,7 +196,7 @@ public final class CueBillboardRenderer {
     }
 
     private static void render(PlayerEntityRenderState state, MatrixStack matrices,
-            OrderedRenderCommandQueue queue, CameraRenderState camera) {
+            VertexConsumerProvider vertexConsumers, int light) {
         if (state.displayName == null || state.nameLabelPos == null) {
             return; // Vanilla itself would not show a name label here right now; neither do we.
         }
@@ -246,11 +262,11 @@ public final class CueBillboardRenderer {
         // NORMAL cues above, so CueDisplaySelector.langKeyFor(cue) here is never
         // asked to resolve that case.
         if (config.textOnly()) {
-            drawBillboardText(matrices, queue, camera, state.nameLabelPos, rise, CueDisplaySelector.langKeyFor(cue),
-                    state.light, (float) alpha, tilt, (float) config.scale());
+            drawBillboardText(matrices, vertexConsumers, state.nameLabelPos, rise, CueDisplaySelector.langKeyFor(cue),
+                    light, (float) alpha, tilt, (float) config.scale());
         } else {
             int cell = CueDisplaySelector.atlasCellFor(cue);
-            drawBillboard(matrices, queue, camera, state.nameLabelPos, rise, cell, half, state.light, (float) alpha, tilt);
+            drawBillboard(matrices, vertexConsumers, state.nameLabelPos, rise, cell, half, light, (float) alpha, tilt);
         }
     }
 
@@ -262,20 +278,36 @@ public final class CueBillboardRenderer {
         if (entry == null || entry.getProfile() == null) {
             return ""; // Not (yet) in the tab list; ClientConfigData.isMuted("") is simply never true.
         }
-        return entry.getProfile().name(); // javap -verified: GameProfile.name(), not getName() (see PlayerListHudMixin).
+        // getName(), not name(): this bucket's rows ship authlib 6.x — see
+        // adapter.bucketbc.mixin.PlayerListHudMixin for the measurement.
+        return entry.getProfile().getName();
     }
 
-    private static void drawBillboard(MatrixStack matrices, OrderedRenderCommandQueue queue,
-            CameraRenderState camera, Vec3d anchor, float rise, int cell, float half, int light, float alpha,
+    /**
+     * The camera orientation to billboard against. Bucket D is handed a {@code
+     * CameraRenderState} by the hook; in this range vanilla's own label
+     * rendering reads it off the {@code EntityRenderDispatcher} instead
+     * ({@code javap -c}, {@code EntityRenderer#renderLabelIfPresent}), and this
+     * is the same dispatcher instance — {@code MinecraftClient} holds exactly
+     * one and hands it to every renderer it constructs — so the quaternion is
+     * the one vanilla is billboarding its own name tags with this frame, not a
+     * separately-derived approximation of it.
+     */
+    private static Quaternionf cameraOrientation() {
+        return MinecraftClient.getInstance().getEntityRenderDispatcher().getRotation();
+    }
+
+    private static void drawBillboard(MatrixStack matrices, VertexConsumerProvider vertexConsumers,
+            Vec3d anchor, float rise, int cell, float half, int light, float alpha,
             float tilt) {
         matrices.push();
         matrices.translate(anchor.x, anchor.y + rise, anchor.z);
         // Exactly the billboard idiom vanilla's own label rendering uses (javap -c,
-        // LabelCommandRenderer.Commands#add): multiplying in the camera's orientation
+        // EntityRenderer#renderLabelIfPresent): multiplying in the camera's orientation
         // leaves local +X pointing screen-right and local +Y screen-up — which is why
         // vanilla then has to flip *only* Y (scale(0.025f, -0.025f, 0.025f)) to draw
         // its y-down text. Our quad geometry is already y-up, so it needs no flip.
-        matrices.multiply(camera.orientation);
+        matrices.multiply(cameraOrientation());
         if (tilt != 0f) {
             // CueIconMotion.tiltRadians: "roll about the view axis" -- after the
             // camera-orientation multiply above, local +Z already points straight at
@@ -289,8 +321,10 @@ public final class CueBillboardRenderer {
         float maxV = CueIconAtlas.maxV(cell);
         int alphaByte = Math.round(clamp01(alpha) * 255.0f);
 
-        queue.submitCustom(matrices, CueRenderLayers.entityTranslucent(CUES_TEXTURE), (entry, vertices) ->
-                emitQuad(entry, vertices, half, minU, maxU, minV, maxV, light, alphaByte));
+        // Bucket D's OrderedRenderCommandQueue#submitCustom hands its callback the
+        // MatrixStack.Entry and VertexConsumer; here both are simply taken directly.
+        VertexConsumer vertices = vertexConsumers.getBuffer(CueRenderLayers.entityTranslucent(CUES_TEXTURE));
+        emitQuad(matrices.peek(), vertices, half, minU, maxU, minV, maxV, light, alphaByte);
         matrices.pop();
     }
 
@@ -313,27 +347,22 @@ public final class CueBillboardRenderer {
      * {@link #BASE_ICON_SIZE} already is.
      *
      * <p>Drawing itself follows vanilla's nameplate text path, not an invented
-     * one: vanilla's own name labels are queued through {@code
-     * OrderedRenderCommandQueue#submitLabel} ({@code javap -c}-verified on
-     * {@code RenderCommandQueue}: {@code submitLabel(MatrixStack, Vec3d, int,
-     * Text, boolean, int, double, CameraRenderState)}, called from {@code
-     * EntityRenderer#renderLabelIfPresent} with exactly {@code
-     * (matrices, state.nameLabelPos, 0, text, !state.sneaking, state.light,
-     * state.squaredDistanceToCamera, camera)}) — but {@code submitLabel} does
-     * its <em>own</em> internal translate/orient/{@code scale(0.025f,
-     * -0.025f, 0.025f)} with no hook for {@code config.scale()}, which is
-     * exactly the one thing this method must be able to override. So the
+     * one. In this range vanilla draws its own name label with {@code
+     * TextRenderer#draw(Text, float, float, int, boolean, Matrix4f,
+     * VertexConsumerProvider, TextLayerType, int, int)} ({@code javap
+     * -c}-verified, {@code EntityRenderer#renderLabelIfPresent}) after doing
+     * its own translate/orient/{@code scale(0.025f, -0.025f, 0.025f)} — and
+     * that scale is hardcoded, with no hook for {@code config.scale()}, which
+     * is exactly the one thing this method must be able to override. So the
      * camera-billboard transform is reproduced by hand instead (identical to
-     * {@link #drawBillboard}'s own, see above), and {@link
-     * OrderedRenderCommandQueue#submitText} — the same queue method {@code
-     * CueScreenPanelRenderer.drawChatText} already uses for plane-fixed text —
-     * draws into the already-positioned result. Horizontal centering
-     * ({@code -textWidth / 2f}) mirrors vanilla's own trick for the identical
-     * purpose ({@code javap -c}, {@code LabelCommandRenderer$Commands#add}:
-     * {@code -textRenderer.getWidth(text) / 2f}).
+     * {@link #drawBillboard}'s own, see above) and the text is drawn into the
+     * already-positioned result. Horizontal centering ({@code -textWidth / 2f})
+     * mirrors vanilla's own trick for the identical purpose. Bucket D reaches
+     * the same place through {@code OrderedRenderCommandQueue#submitText}; the
+     * arguments correspond one-for-one, only re-ordered by the newer API.
      */
-    private static void drawBillboardText(MatrixStack matrices, OrderedRenderCommandQueue queue,
-            CameraRenderState camera, Vec3d anchor, float rise, String langKey, int light, float alpha,
+    private static void drawBillboardText(MatrixStack matrices, VertexConsumerProvider vertexConsumers,
+            Vec3d anchor, float rise, String langKey, int light, float alpha,
             float tilt, float configScale) {
         TextRenderer textRenderer = MinecraftClient.getInstance().textRenderer;
         if (textRenderer == null) {
@@ -344,7 +373,7 @@ public final class CueBillboardRenderer {
 
         matrices.push();
         matrices.translate(anchor.x, anchor.y + rise, anchor.z);
-        matrices.multiply(camera.orientation);
+        matrices.multiply(cameraOrientation());
         if (tilt != 0f) {
             matrices.multiply(RotationAxis.POSITIVE_Z.rotation(tilt));
         }
@@ -358,12 +387,17 @@ public final class CueBillboardRenderer {
         int color = (alphaByte << 24) | 0xFFFFFF;
 
         // DESIGN.md §7 P5b precedent (CueScreenPanelRenderer.drawChatText's own
-        // note): whether submitText's colour alpha byte is actually honoured all
-        // the way into the vertex consumer was not javap-traced to the end there
+        // note): whether the colour's alpha byte is actually honoured all the way
+        // into the vertex consumer was not javap-traced to the end in bucket D
         // either, and is not here -- a reasonable assumption given vanilla's own
         // chat/actionbar fade relies on the same path, not a proven one.
-        queue.submitText(matrices, -textWidth / 2f, 0f, label.asOrderedText(), false,
-                TextRenderer.TextLayerType.NORMAL, light, color, 0, 0);
+        //
+        // Background colour 0 (fully transparent) and shadow=false match bucket
+        // D's submitText arguments exactly; the trailing int is the light value,
+        // which the newer API takes earlier in its parameter list.
+        textRenderer.draw(label.asOrderedText(), -textWidth / 2f, 0f, color, false,
+                matrices.peek().getPositionMatrix(), vertexConsumers,
+                TextRenderer.TextLayerType.NORMAL, 0, light);
         matrices.pop();
     }
 
