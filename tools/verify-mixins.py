@@ -40,6 +40,9 @@ JAVAP = pathlib.Path("/home/erto/jdk21/bin/javap")
 MIXIN_TARGET = re.compile(r"value=\[class L([^;]+);")
 METHOD_VALUES = re.compile(r'method=\[([^\]]*)\]')
 STRING_LIT = re.compile(r'"([^"]*)"')
+# javap -v prints the raw class-file header, which is where a superclass can be
+# read without a bytecode library: "  super_class: #5   // fvx"
+SUPER_CLASS = re.compile(r"^\s*super_class:\s*#\d+\s*//\s*(\S+)", re.M)
 
 
 def rows():
@@ -90,7 +93,60 @@ def load_tiny(version):
             parts = line.split("\t")
             if len(parts) > 4:
                 owners[cur].setdefault(parts[4], []).append(to_intermediary(parts[2]))
-    return owners
+    return owners, official_to_inter
+
+
+_HIERARCHY_CACHE = {}
+
+
+def supertypes(version, owner, official_to_inter):
+    """[owner, its superclass, ...] in intermediary names, Object excluded.
+
+    A mixin's method= may perfectly legitimately name a method its target class
+    only *inherits the name of*. Intermediary assigns a member name once, at the
+    highest declaration, and an override with the same descriptor keeps it -- so
+    the tiny file lists that member under the superclass and not under the
+    subclass, even though the subclass really does declare an override.
+    PlayerEntityModel#setAngles on 1.21/1.21.1 is exactly that (declared on
+    BipedEntityModel, overridden by PlayerEntityModel, same erasure), and
+    checking the owner's own member list alone reported both bucket A rows
+    broken while the mixin binds perfectly well: Mixin resolves method= against
+    the target class's real bytecode, where the override is present. The same
+    situation was already noted for *fields* in DESIGN.md §7's P5 acceptance
+    note; this is its method-side twin.
+
+    The hierarchy is read from loom's own official-namespace merged jar -- the
+    only class graph on disk that is guaranteed to match this row exactly -- and
+    translated back with the same class map load_tiny already builds.
+
+    Accepted looseness: a private or package-private member of a superclass is
+    not actually inherited, and this walk would pass it. That trade is
+    deliberate -- the alternative is the false failure above, on a mixin the
+    game loads fine -- and it is bounded, because the descriptor half of
+    method= is still matched exactly wherever the name is found.
+    """
+    cached = _HIERARCHY_CACHE.get((version, owner))
+    if cached is not None:
+        return cached
+
+    inter_to_official = {v: k for k, v in official_to_inter.items()}
+    jar = LOOM_CACHE / version / "minecraft-merged.jar"
+    chain, seen, current = [], set(), owner
+    while current and current not in seen and jar.exists():
+        seen.add(current)
+        chain.append(current)
+        official = inter_to_official.get(current, current)
+        out = subprocess.run(
+            [str(JAVAP), "-v", "-cp", str(jar), official.replace("/", ".")],
+            capture_output=True, text=True).stdout
+        match = SUPER_CLASS.search(out)
+        if not match or match.group(1) == "java/lang/Object":
+            break
+        current = official_to_inter.get(match.group(1), match.group(1))
+    if not chain:
+        chain = [owner]
+    _HIERARCHY_CACHE[(version, owner)] = chain
+    return chain
 
 
 def jar_for(version):
@@ -102,7 +158,8 @@ def jar_for(version):
 
 def check(version, row):
     """Returns (checked, [problem, ...])."""
-    jar, owners = jar_for(version), load_tiny(version)
+    jar = jar_for(version)
+    owners, official_to_inter = load_tiny(version)
     pkg = f"dev/zsithious/socialcues/adapter/bucket{row['bucket'].lower()}/mixin/"
     problems, checked = [], 0
 
@@ -131,6 +188,8 @@ def check(version, row):
                 problems.append(f"{simple}: @Mixin target {owner} absent from {version} mappings")
                 continue
             checked += 1
+            # The owner *and* everything it inherits from -- see supertypes().
+            chain = supertypes(version, owner, official_to_inter)
             for group in METHOD_VALUES.findall(out):
                 for member in STRING_LIT.findall(group):
                     # method= is either a bare name or name+descriptor; the
@@ -138,16 +197,24 @@ def check(version, row):
                     # when it is there it gets checked too.
                     bare, _, desc = member.partition("(")
                     desc = "(" + desc if desc else ""
-                    known = owners[owner].get(bare)
+                    known, declared_on = None, None
+                    for owner_or_super in chain:
+                        found = owners.get(owner_or_super, {}).get(bare)
+                        if found is not None:
+                            known, declared_on = found, owner_or_super
+                            break
                     checked += 1
                     if known is None:
-                        problems.append(f"{simple}: {owner}.{bare} absent on {version}")
+                        problems.append(
+                            f"{simple}: {owner}.{bare} absent on {version} "
+                            f"(searched {' -> '.join(chain)})")
                     elif desc and desc not in known:
                         # Intermediary descriptors are in the *official*
                         # namespace, as is the jar's; a mismatch here means the
                         # remapper picked a different overload than the source did.
+                        where = "" if declared_on == owner else f" (declared on {declared_on})"
                         problems.append(
-                            f"{simple}: {owner}.{bare} exists on {version} but not with {desc} "
+                            f"{simple}: {owner}.{bare} exists on {version}{where} but not with {desc} "
                             f"(has {', '.join(known)})")
     return checked, problems
 
