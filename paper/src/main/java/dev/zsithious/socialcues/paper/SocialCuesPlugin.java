@@ -13,6 +13,7 @@ import dev.zsithious.socialcues.core.protocol.S2CMessages;
 import dev.zsithious.socialcues.core.relay.CueRelay;
 import dev.zsithious.socialcues.core.relay.TickResult;
 import dev.zsithious.socialcues.paper.config.PluginConfig;
+import dev.zsithious.socialcues.paper.integration.PlaceholderIntegration;
 import dev.zsithious.socialcues.paper.network.PlayerLifecycleListener;
 import dev.zsithious.socialcues.paper.network.SocialCuesMessageListener;
 import dev.zsithious.socialcues.paper.relay.BukkitVisibilityChecker;
@@ -53,6 +54,13 @@ public final class SocialCuesPlugin extends JavaPlugin {
         scheduler = new BukkitPluginScheduler(this);
         getServer().getPluginManager().registerEvents(
                 new PlayerLifecycleListener(this, relay, messageListener, scheduler), this);
+
+        // DESIGN.md §14 P8: optional, and silent when PlaceholderAPI is absent
+        // (which is the common case) -- see PlaceholderIntegration's Javadoc for
+        // why the expansion is never named directly from here.
+        if (PlaceholderIntegration.registerIfPresent(this, relay)) {
+            getLogger().info("PlaceholderAPI detected — registered the %socialcues_*% placeholders.");
+        }
 
         long periodTicks = Math.max(1, config.relayConfig().updateIntervalTicks());
         scheduler.runRepeating(this::broadcastTick, periodTicks, periodTicks);

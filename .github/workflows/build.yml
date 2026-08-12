@@ -3,6 +3,7 @@ name: Build
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
 
 # NOTE: every gradle.properties in this repo pins
@@ -13,6 +14,31 @@ on:
 # takes precedence over the value baked into gradle.properties).
 
 jobs:
+  # versions.json is the single source of truth for the version matrix
+  # (DESIGN.md §3): settings.gradle.kts generates the twelve :mc:<version>
+  # projects from it, so a hardcoded list here would be a second copy free to
+  # drift the moment a row is added. This job turns that file into the matrix
+  # every downstream job fans out over.
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      mc-versions: ${{ steps.read.outputs.mc-versions }}
+      publish-targets: ${{ steps.read.outputs.publish-targets }}
+      mod-version: ${{ steps.read.outputs.mod-version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read
+        run: |
+          echo "mc-versions=$(jq -c '[.versions[].mc]' versions.json)" >> "$GITHUB_OUTPUT"
+          # Each row carries its own Modrinth release channel, derived from
+          # versions.json's handTested flag rather than hardcoded here: the
+          # flag records a *fact* (has anyone actually run this row in game),
+          # and this line is the one place the policy "tested -> release,
+          # otherwise beta" lives. Flipping a row after a hand test is a
+          # one-word edit in versions.json.
+          echo "publish-targets=$(jq -c '[.versions[] | {mc: .mc, channel: (if .handTested then "release" else "beta" end)}]' versions.json)" >> "$GITHUB_OUTPUT"
+          echo "mod-version=$(grep '^mod_version=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+
   core-test:
     runs-on: ubuntu-latest
     steps:
@@ -25,24 +51,12 @@ jobs:
         run: ./gradlew :core:test -Dorg.gradle.java.home="$JAVA_HOME" --no-daemon
 
   fabric-matrix:
-    needs: core-test
+    needs: [matrix, core-test]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        mc:
-          - "1.21"
-          - "1.21.1"
-          - "1.21.2"
-          - "1.21.3"
-          - "1.21.4"
-          - "1.21.5"
-          - "1.21.6"
-          - "1.21.7"
-          - "1.21.8"
-          - "1.21.9"
-          - "1.21.10"
-          - "1.21.11"
+        mc: ${{ fromJSON(needs.matrix.outputs.mc-versions) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -51,6 +65,11 @@ jobs:
           java-version: 21
       - name: build :mc:${{ matrix.mc }}
         run: ./gradlew ":mc:${{ matrix.mc }}:build" -Dorg.gradle.java.home="$JAVA_HOME" --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fabric-${{ matrix.mc }}
+          path: mc/${{ matrix.mc }}/build/libs/*.jar
+          if-no-files-found: error
 
   paper-build:
     needs: core-test
@@ -63,24 +82,104 @@ jobs:
           java-version: 21
       - name: build Paper plugin
         run: ./gradlew :paper:build -Dorg.gradle.java.home="$JAVA_HOME" --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: paper
+          path: paper/build/libs/*.jar
+          if-no-files-found: error
 
-  # Modrinth upload — disabled until P8 (DESIGN.md §13/§14). Uncomment and
-  # add the `MODRINTH_TOKEN` secret + real project id once ready to publish.
-  # publish:
-  #   needs: [fabric-matrix, paper-build]
-  #   if: startsWith(github.ref, 'refs/tags/')
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: actions/setup-java@v4
-  #       with:
-  #         distribution: temurin
-  #         java-version: 21
-  #     - name: Publish all jars to Modrinth
-  #       uses: Kir-Antipov/mc-publish@v3.3
-  #       with:
-  #         modrinth-id: TODO-modrinth-project-id
-  #         modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
-  #         files: |
-  #           mc/*/build/libs/!(*-@(dev|sources)).jar
-  #           paper/build/libs/!(*-@(dev|sources)).jar
+  # ---------------------------------------------------------------------------
+  # Publishing (DESIGN.md §13). Runs only on a v* tag, and only once the
+  # repository actually has somewhere to publish to: both jobs are gated on the
+  # MODRINTH_ID repository *variable*, so until it is set the jobs skip
+  # cleanly instead of failing every tag with a credentials error.
+  #
+  # Setup, once:
+  #   - repository variable MODRINTH_ID  = the Modrinth project id
+  #   - repository secret   MODRINTH_TOKEN = a Modrinth PAT with write access
+  # ---------------------------------------------------------------------------
+
+  # One Modrinth version PER Minecraft version, not one version carrying all
+  # twelve jars. Modrinth would accept the latter, but then every player sees
+  # twelve files under a single entry with nothing saying which one is theirs;
+  # a version per row is what makes the site's own "1.21.4" filter return the
+  # 1.21.4 jar.
+  publish-fabric:
+    needs: [matrix, fabric-matrix, paper-build]
+    if: startsWith(github.ref, 'refs/tags/v') && vars.MODRINTH_ID != ''
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      # Serialised: twelve parallel uploads to the same project is a good way
+      # to meet Modrinth's rate limiter on a release.
+      max-parallel: 1
+      matrix:
+        target: ${{ fromJSON(needs.matrix.outputs.publish-targets) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: fabric-${{ matrix.target.mc }}
+          path: dist
+      - name: publish ${{ matrix.target.mc }} to Modrinth (${{ matrix.target.channel }})
+        uses: Kir-Antipov/mc-publish@v3.3
+        with:
+          modrinth-id: ${{ vars.MODRINTH_ID }}
+          modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
+          files: dist/!(*-@(dev|sources)).jar
+          name: Social Cues ${{ needs.matrix.outputs.mod-version }} for ${{ matrix.target.mc }}
+          version: ${{ needs.matrix.outputs.mod-version }}+mc${{ matrix.target.mc }}
+          game-versions: ${{ matrix.target.mc }}
+          loaders: fabric
+          # release only for rows someone has actually played; see the matrix
+          # job for where this comes from.
+          version-type: ${{ matrix.target.channel }}
+          # Deliberately not inferred from the jar: fabric.mod.json declares a
+          # `~1.21.x` range for the loader's benefit, which is not the same
+          # question as "which Modrinth game version is this file for".
+          game-version-filter: none
+          dependencies: |
+            fabric-api(required)
+            modmenu(optional)
+            simple-voice-chat(optional)
+          changelog-file: CHANGELOG.md
+
+  # The Paper plugin is one jar for all of 1.21.x (DESIGN.md §8: no NMS, built
+  # against the oldest supported API), so it is one Modrinth version listing
+  # every game version it actually supports.
+  publish-paper:
+    needs: [matrix, fabric-matrix, paper-build]
+    if: startsWith(github.ref, 'refs/tags/v') && vars.MODRINTH_ID != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: paper
+          path: dist
+      - name: publish Paper plugin to Modrinth
+        uses: Kir-Antipov/mc-publish@v3.3
+        with:
+          modrinth-id: ${{ vars.MODRINTH_ID }}
+          modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
+          files: dist/!(*-@(dev|sources)).jar
+          name: Social Cues ${{ needs.matrix.outputs.mod-version }} (Paper plugin)
+          version: ${{ needs.matrix.outputs.mod-version }}+paper
+          # The one plugin jar was start-up verified on both a 1.21 and a
+          # 1.21.11 server, and it is the same jar everywhere by construction
+          # (no NMS, oldest-API compile), so this one is a release.
+          version-type: release
+          # Every row the Fabric side supports, because the single jar does.
+          game-versions: ${{ join(fromJSON(needs.matrix.outputs.mc-versions), ' ') }}
+          game-version-filter: none
+          # Folia is deliberately absent: the plugin schedules through
+          # BukkitPluginScheduler, and Folia needs region schedulers. Claiming
+          # it would be claiming something nobody has run.
+          loaders: |
+            bukkit
+            spigot
+            paper
+            purpur
+          dependencies: |
+            placeholderapi(optional)
+          changelog-file: CHANGELOG.md

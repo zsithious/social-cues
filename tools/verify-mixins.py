@@ -149,8 +149,21 @@ def supertypes(version, owner, official_to_inter):
     return chain
 
 
+def mod_version():
+    """
+    Read from gradle.properties rather than hardcoded: this tool used to bake
+    "0.1.0" into the jar name, and the first release bump turned it into
+    "not built yet" for all twelve rows at once -- a message that points at the
+    build being missing when the build is fine.
+    """
+    for line in (ROOT / "gradle.properties").read_text().splitlines():
+        if line.startswith("mod_version="):
+            return line.split("=", 1)[1].strip()
+    raise SystemExit("gradle.properties has no mod_version= line")
+
+
 def jar_for(version):
-    jar = ROOT / "mc" / version / "build/libs" / f"socialcues-fabric-{version}-0.1.0.jar"
+    jar = ROOT / "mc" / version / "build/libs" / f"socialcues-fabric-{version}-{mod_version()}.jar"
     if not jar.exists():
         raise SystemExit(f"{version}: {jar.relative_to(ROOT)} not built yet -- ./gradlew :mc:{version}:build")
     return jar

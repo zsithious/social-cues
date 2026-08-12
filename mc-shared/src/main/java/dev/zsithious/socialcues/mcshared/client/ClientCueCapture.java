@@ -10,6 +10,7 @@ import dev.zsithious.socialcues.core.client.CommandDraftDetector;
 import dev.zsithious.socialcues.core.client.CueSampler;
 import dev.zsithious.socialcues.core.client.ScreenKindMapper;
 import dev.zsithious.socialcues.core.client.SharePrefsSource;
+import dev.zsithious.socialcues.core.client.VoiceActivityTracker;
 import dev.zsithious.socialcues.core.policy.EffectivePolicy;
 import dev.zsithious.socialcues.core.policy.PolicyBits;
 import dev.zsithious.socialcues.core.protocol.C2SMessages;
@@ -80,6 +81,14 @@ import org.lwjgl.glfw.GLFW;
  *   <li>Otherwise {@link Activity#NORMAL}.</li>
  * </ol>
  *
+ * <p>{@link Activity#SPEAKING} (DESIGN.md §14 P8) is then layered over that
+ * result rather than inserted into it: it replaces {@code NORMAL} and
+ * {@code AFK}, and nothing else. It can therefore never remove a cue — a
+ * player talking while typing still reads as typing — while it does replace
+ * the two outcomes that would be actively wrong about someone audibly
+ * present. Transmitting also feeds the idle timer, so voice keeps a player
+ * out of {@code AFK} the same way a keypress does.
+ *
  * <p><b>"Hiç ölçülmeyecek" (DESIGN.md §6/§10):</b> each tier above is gated
  * by its own policy bit computed fresh every tick
  * ({@link #currentEffectiveBits()}); when a bit is off, this class does not
@@ -122,6 +131,25 @@ public final class ClientCueCapture {
     private static SharePrefsSource sharePrefs = SharePrefsSource.allEnabled();
 
     /**
+     * DESIGN.md §6 "Konuşma" / §14 P8 — the voice half of the same idea, and
+     * the same shape of seam: this class never names a Simple Voice Chat type
+     * (it could not load for the vast majority of players who do not have the
+     * mod — see {@link VoiceProbe}'s Javadoc), it only reads this one boolean.
+     * {@link VoiceProbe#NONE} until the {@code voicechat} entrypoint installs
+     * a real one, which only ever happens when Simple Voice Chat is present to
+     * invoke it.
+     */
+    private static VoiceProbe voiceProbe = VoiceProbe.NONE;
+
+    /**
+     * Smooths {@link #voiceProbe}'s instantaneous "transmitting right now"
+     * into the steady cue {@code SPEAKING} is meant to be; see
+     * {@link VoiceActivityTracker} for why the raw signal is unusable
+     * directly.
+     */
+    private static final VoiceActivityTracker VOICE_ACTIVITY = new VoiceActivityTracker();
+
+    /**
      * Set once by {@link #tickGuarded} when capture throws. Deliberately not
      * cleared by {@link #reset}: a capture bug is a property of this build, not
      * of the connection, so rejoining would only re-throw and re-log it.
@@ -159,6 +187,21 @@ public final class ClientCueCapture {
     }
 
     /**
+     * DESIGN.md §14 P8: the single seam the optional Simple Voice Chat
+     * integration calls into, from its {@code voicechat} entrypoint. Passing
+     * {@link VoiceProbe#NONE} detaches it again (the integration does this
+     * when the voice connection drops), which also clears any hold the tracker
+     * was still counting down, so a stale {@code SPEAKING} cannot outlive the
+     * thing that produced it.
+     */
+    public static void setVoiceProbe(VoiceProbe probe) {
+        voiceProbe = Objects.requireNonNull(probe, "probe");
+        if (probe == VoiceProbe.NONE) {
+            VOICE_ACTIVITY.reset();
+        }
+    }
+
+    /**
      * Called by {@code ClientHandshakeNetworking} whenever the handshake
      * leaves {@code ACTIVE} (disconnect) or is about to be renegotiated
      * (fresh join): forgets the last-sent state and pose bookkeeping so a
@@ -172,6 +215,7 @@ public final class ClientCueCapture {
         lastLoggedActivity = null;
         lastLoggedScreenKind = null;
         COMMAND_DRAFT.reset();
+        VOICE_ACTIVITY.reset();
         // DESIGN.md §7 P4b: same reasoning as RemoteCueStoreHolder's own reset call
         // (ClientHandshakeNetworking) — a stale self-cue from a previous server must
         // never survive into a new session.
@@ -286,6 +330,39 @@ public final class ClientCueCapture {
         recordInputActivity(client, now);
 
         int effectiveBits = currentEffectiveBits();
+
+        // DESIGN.md §6 "Konuşma" / §14 P8. Sampled before the ladder below,
+        // because a live microphone is also *input*: it feeds IDLE_TIMER the
+        // same way a keypress does, and that has to happen before the AFK
+        // branches read the timer.
+        //
+        // "Bir özelliği kapattıysa istemci o sinyali HİÇ ölçmez" (§6) is
+        // literal here — with the VOICE bit off, voiceProbe is not called at
+        // all, so on a server that forbids voice cues the voice mod is never
+        // even asked whether this player is talking.
+        boolean speaking = false;
+        if (hasBit(effectiveBits, PolicyBits.VOICE)) {
+            speaking = VOICE_ACTIVITY.update(probeTransmitting(), now);
+            if (speaking) {
+                // Transmitting is deliberate input, so it postpones AFK just
+                // like a keypress: someone mid-conversation is emphatically
+                // not "away from keyboard", and without this they would flip
+                // to AFK in every gap the hold window does not cover.
+                //
+                // The honest caveat: with voice *activation* (rather than
+                // push-to-talk) a genuinely absent player in a noisy room can
+                // keep transmitting, and will read as present. That error is
+                // narrow and quiet; the alternative error -- the cue flickering
+                // between SPEAKING and AFK for everyone mid-sentence -- is
+                // constant and loud.
+                IDLE_TIMER.recordActivity(now);
+            }
+        } else {
+            // Policy withdrawn mid-session: drop any hold still counting down
+            // rather than letting it decay into one last SPEAKING packet.
+            VOICE_ACTIVITY.reset();
+        }
+
         Screen screen = client.currentScreen;
 
         Activity activity;
@@ -334,6 +411,19 @@ public final class ClientCueCapture {
             activity = Activity.AFK;
         } else {
             activity = Activity.NORMAL;
+        }
+
+        // DESIGN.md §14 P8 — where SPEAKING sits in the precedence ladder.
+        // Deliberately applied *after* the ladder and only over NORMAL/AFK, so
+        // it can never take a cue away: someone talking while typing still
+        // reads as typing, and someone talking with a chest open still shows
+        // the chest panel (both are true and strictly more specific). What it
+        // does replace is the two states that would otherwise be actively
+        // wrong about a person who is audibly present -- NORMAL (says nothing)
+        // and AFK (says the opposite). That includes the pause-menu AFK a few
+        // lines above: talking through the ESC menu is presence, not absence.
+        if (speaking && (activity == Activity.NORMAL || activity == Activity.AFK)) {
+            activity = Activity.SPEAKING;
         }
 
         int flags = client.player.isSneaking() ? CueFlags.SNEAKING : 0;
@@ -510,6 +600,38 @@ public final class ClientCueCapture {
 
         if (keyHeld || acting || moved || looked) {
             IDLE_TIMER.recordActivity(nowMs);
+        }
+    }
+
+    /**
+     * DESIGN.md §14 P8 — reads {@link #voiceProbe} behind its own guard,
+     * separate from {@link #tickGuarded}'s.
+     *
+     * <p>The failure this exists for is specific and foreseeable, not
+     * hypothetical: Simple Voice Chat is a soft dependency with no enforced
+     * version floor, and {@code isTalking()} was only added in voice chat API
+     * 2.6.0 (measured across the published API jars, not assumed). A player
+     * running an older 2.5.x build therefore has a Simple Voice Chat that
+     * happily invokes our entrypoint but whose interface lacks the method,
+     * which surfaces as a {@link NoSuchMethodError} — an {@link Error}, thrown
+     * at the call site, from a mod that is working exactly as designed.
+     *
+     * <p>Letting that reach {@link #tickGuarded} would disable <i>all</i> cue
+     * capture for the session over an optional extra. So it is caught here
+     * instead and only the voice probe is detached: everything else carries on,
+     * and the player simply has no voice cue, which is the same thing every
+     * player without the mod already has.
+     */
+    private static boolean probeTransmitting() {
+        try {
+            return voiceProbe.transmitting();
+        } catch (Throwable t) {
+            setVoiceProbe(VoiceProbe.NONE);
+            LOGGER.log(Level.WARNING, "socialcues: the Simple Voice Chat probe threw and has been "
+                    + "detached for this session; every other cue is unaffected. Usually this means "
+                    + "an installed Simple Voice Chat older than API 2.6.0, which is the version that "
+                    + "introduced the call this needs.", t);
+            return false;
         }
     }
 

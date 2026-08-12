@@ -6,6 +6,7 @@
   "description": "See when players are typing, browsing a GUI, or idle. Open source, independent alternative implementation.",
   "authors": ["zsithious"],
   "license": "MIT",
+  "icon": "assets/socialcues/icon.png",${contact_block}
   "environment": "*",
   "mixins": [
     "socialcues.mixins.json"
@@ -15,7 +16,8 @@
       "dev.zsithious.socialcues.mcshared.SocialCuesInitializer"
     ],
     "client": [${client_entrypoints}],
-    "modmenu": [${modmenu_entrypoints}]
+    "modmenu": [${modmenu_entrypoints}],
+    "voicechat": ["dev.zsithious.socialcues.voicechat.SocialCuesVoicechatPlugin"]
   },
   "depends": {
     "fabricloader": ">=0.16.0",
@@ -24,6 +26,7 @@
     "fabric-api": "*"${extra_depends}
   },
   "suggests": {
-    "modmenu": "*"
+    "modmenu": "*",
+    "voicechat_api": ">=2.6.0"
   }
 }

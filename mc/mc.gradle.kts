@@ -59,6 +59,13 @@ require((modMenuVersion == null) == (clothConfigVersion == null)
         "The P6 config UI needs all three or none — see integrations/configui/'s package-info."
 }
 
+/**
+ * DESIGN.md §14 P8 — the Simple Voice Chat API floor, deliberately not a
+ * versions.json column: the artifact is Minecraft-independent, so all twelve
+ * rows share one value. See integrations/voicechat/'s package-info.
+ */
+val voicechatApiVersion = "2.6.0"
+
 /** DESIGN.md §14 P6: does this row build the config UI at all? See integrations/configui/'s package-info. */
 val configUiEnabled = clothConfigVersion != null
 val loomVersionForRow = row["loom"] as String
@@ -110,6 +117,12 @@ repositories {
             includeGroup("me.shedaniel.cloth.api")
         }
     }
+    // P8 voice integration. Same reasoning as the two above: scoped to the one
+    // group it is trusted for.
+    maven("https://maven.maxhenkel.de/repository/public") {
+        name = "MaxHenkel"
+        content { includeGroup("de.maxhenkel.voicechat") }
+    }
 }
 
 dependencies {
@@ -133,6 +146,30 @@ dependencies {
         modCompileOnly("com.terraformersmc:modmenu:$modMenuVersion")
         modLocalRuntime("com.terraformersmc:modmenu:$modMenuVersion")
     }
+
+    // DESIGN.md §6 "Konuşma" / §14 P8. Simple Voice Chat is a SOFT dependency
+    // reached only through the `voicechat` entrypoint, which nothing but that
+    // mod ever reads — so `compileOnly` (not modCompileOnly: the API artifact
+    // is a plain library jar with no fabric.mod.json and no Minecraft types in
+    // it, so there is nothing for loom to remap).
+    //
+    // Never `include`d, and this is the one dependency here where that is a
+    // licence statement rather than a packaging preference: Simple Voice Chat
+    // is All Rights Reserved, API module included. compileOnly is what makes
+    // "no third-party ARR code ships in this MIT project" a mechanical fact.
+    //
+    // Pinned to the LOWEST version that carries what we call, not the newest:
+    // VoicechatClientApi#isTalking() first appears in 2.6.0 (measured by
+    // reading the published API jars 2.4.0 -> 2.6.20). Compiling against the
+    // floor maximises the range of installed Simple Voice Chat builds that
+    // link at runtime; anything older is caught and disabled at the call site
+    // (ClientCueCapture#probeTransmitting) rather than crashing.
+    //
+    // Unconditional across all twelve rows, unlike the config UI above: the
+    // API jar contains no net/minecraft reference at all, so one artifact is
+    // correct for every Minecraft version and no versions.json column is
+    // needed. See integrations/voicechat/'s package-info.
+    compileOnly("de.maxhenkel.voicechat:voicechat-api:$voicechatApiVersion")
 
     // Cloth Config is a HARD dependency of the config screen, so it is a real
     // implementation dependency, and `include`d (jar-in-jar) so an end user
@@ -234,6 +271,9 @@ sourceSets {
             if (configUiEnabled) {
                 srcDir(rootProject.file("integrations/configui/src/main/java"))
             }
+            // DESIGN.md §14 P8. Unconditional, unlike configui above: the voice
+            // chat API is Minecraft-independent, so every row can compile it.
+            srcDir(rootProject.file("integrations/voicechat/src/main/java"))
         }
         resources {
             srcDir(rootProject.file("mc-shared/src/main/resources"))
@@ -282,7 +322,28 @@ val extraDepends = if (configUiEnabled) {
     ""
 }
 
+// DESIGN.md §13 (P8). Built here rather than written into the shared
+// fabric.mod.json because the block has to *disappear* when the URLs are not
+// set yet — an empty string, or worse a placeholder, in published mod metadata
+// is a dead link on every mirror that copies it. See gradle.properties.
+val contactBlock = buildString {
+    val entries = listOfNotNull(
+        providers.gradleProperty("project_homepage").orNull?.takeIf { it.isNotBlank() }
+            ?.let { "\"homepage\": \"$it\"" },
+        providers.gradleProperty("project_sources").orNull?.takeIf { it.isNotBlank() }
+            ?.let { "\"sources\": \"$it\"" },
+        providers.gradleProperty("project_issues").orNull?.takeIf { it.isNotBlank() }
+            ?.let { "\"issues\": \"$it\"" }
+    )
+    if (entries.isNotEmpty()) {
+        append("\n  \"contact\": {\n    ")
+        append(entries.joinToString(",\n    "))
+        append("\n  },")
+    }
+}
+
 tasks.processResources {
+    inputs.property("contactBlock", contactBlock)
     inputs.property("version", project.version)
     inputs.property("mcVersionRange", "~$mcVersion")
     inputs.property("clientEntrypoints", clientEntrypoints)
@@ -294,7 +355,8 @@ tasks.processResources {
             "mc_version_range" to "~$mcVersion",
             "client_entrypoints" to clientEntrypoints,
             "modmenu_entrypoints" to modMenuEntrypoints,
-            "extra_depends" to extraDepends
+            "extra_depends" to extraDepends,
+            "contact_block" to contactBlock
         )
     }
 }
@@ -320,7 +382,11 @@ val checkNoTextAccess by tasks.registering {
         rootProject.file("adapters/compat/$compat/src"),
         // The config UI is client source like any other and gets the same
         // guarantee — a text field on a config screen is still a text field.
-        rootProject.file("integrations/configui/src").takeIf { configUiEnabled }
+        rootProject.file("integrations/configui/src").takeIf { configUiEnabled },
+        // The voice bridge is client source like any other. It reads no text
+        // by construction (its whole surface is two booleans), and this is
+        // what keeps that true of whatever it becomes later.
+        rootProject.file("integrations/voicechat/src")
     )
 
     doLast {
