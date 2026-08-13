@@ -230,19 +230,27 @@ loom {
         // and at the default INFO level it is invisible — which has now cost
         // two separate hand-test rounds).
         val julConfig = rootProject.file("mc/hand-test-logging.properties").absolutePath
+        // The two hand-test clients have fixed names so a server can tell them
+        // apart, but a name is sometimes the point of the test -- joining a real
+        // server that already knows an account, or shooting footage where
+        // "SocialCuesA" would be the only thing on screen that is not real.
+        // -PclientAName=<name> / -PclientBName=<name> override just the name;
+        // everything else about the run configuration is unchanged.
+        val clientAName = (project.findProperty("clientAName") as String?) ?: "SocialCuesA"
+        val clientBName = (project.findProperty("clientBName") as String?) ?: "SocialCuesB"
         create("clientA") {
             client()
-            configName = "Client A (SocialCuesA)"
+            configName = "Client A ($clientAName)"
             runDir = "run-a"
-            programArgs("--username", "SocialCuesA", "--width", "854", "--height", "480")
+            programArgs("--username", clientAName, "--width", "854", "--height", "480")
             vmArgs("-Xmx1G", "-XX:+UseG1GC", "-XX:ParallelGCThreads=2", "-XX:ConcGCThreads=1",
                     "-Djava.util.logging.config.file=$julConfig")
         }
         create("clientB") {
             client()
-            configName = "Client B (SocialCuesB)"
+            configName = "Client B ($clientBName)"
             runDir = "run-b"
-            programArgs("--username", "SocialCuesB", "--width", "854", "--height", "480")
+            programArgs("--username", clientBName, "--width", "854", "--height", "480")
             vmArgs("-Xmx1G", "-XX:+UseG1GC", "-XX:ParallelGCThreads=2", "-XX:ConcGCThreads=1",
                     "-Djava.util.logging.config.file=$julConfig")
         }
