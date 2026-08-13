@@ -40,7 +40,19 @@ val versionRows = versionsData["versions"] as List<Map<String, Any?>>
 versionRows.forEach { row ->
     val mcVersion = row["mc"] as String
     val path = ":mc:$mcVersion"
+    val dir = file("mc/$mcVersion")
+
+    // Nothing inside mc/<version>/ is tracked: the build output and the two
+    // hand-test run dirs are all generated and gitignored, so these directories
+    // simply do not exist in a fresh clone -- and Gradle refuses to configure a
+    // project whose directory is missing, which failed every CI run until this
+    // line existed. Creating them here keeps the rule that adding a Minecraft
+    // version is a one-line edit to versions.json; the alternative, a committed
+    // .gitkeep per row, would be a second list of versions free to drift from
+    // the first.
+    dir.mkdirs()
+
     include(path)
-    project(path).projectDir = file("mc/$mcVersion")
+    project(path).projectDir = dir
     project(path).buildFileName = "../mc.gradle.kts"
 }
