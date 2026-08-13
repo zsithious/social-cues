@@ -1,45 +1,59 @@
-# Social Cues — Paper eklentisi yapılandırması.
-# Bkz. DESIGN.md §5 (protokol/politika bitleri), §8.7 (bu dosyanın alanları), §9.
+# Social Cues — Paper plugin configuration.
 #
-# Sunucu politikası her zaman üst sınırdır: istemci burada açık olan bir
-# özelliği kapatabilir (kendi SharePrefs'i ile), ama burada kapalı olan bir
-# özelliği açamaz. Röle, etkin izne uymayan alanları gönderim anında sıfırlar.
+# The server policy is always the ceiling. A player's own client settings can
+# turn OFF anything enabled here, but can never turn ON anything disabled here.
+# The relay clears any field the effective permission does not allow at the
+# moment it is sent, so a disabled cue is never transmitted at all — it is not
+# merely hidden on the receiving side.
+#
+# Reload with a server restart. Every option below takes effect for cues sent
+# after the change; nothing is stored or replayed.
 
 policy:
-  # DESIGN.md §5 politika bitleri — sunucunun izin verdiği özellikler.
-  share-typing: true          # bit 0 TYPING — yazma durumu
-  share-screens: true         # bit 1 SCREENS — bir ekranda olma durumu
-  share-screen-detail: true   # bit 2 SCREEN_DETAIL — ekran türü ayrıntısı (kapalıysa UNKNOWN)
-  share-voice: true           # bit 4 VOICE — konuşma durumu
-  share-intensity: true       # bit 5 INTENSITY — yazma hızı (kapalıysa 0 gönderilir)
-  share-global-tier: true     # bit 6 GLOBAL_TIER — sekme listesi için kaba global yayın
+  # What the server permits players to share about themselves.
+  share-typing: true          # typing in chat, a command, a sign, or a book
+  share-screens: true         # that a menu is open at all
+  share-screen-detail: true   # WHICH menu is open; when false, clients see only "a menu"
+  share-voice: true           # speaking, when Simple Voice Chat is installed
+  share-intensity: true       # typing speed, which drives how fast the arms move
+  share-global-tier: true     # the coarse, distance-independent cue used by the tab list
 
-# off | nearby | all — DESIGN.md §5'teki bit çevrimi:
-#   off    -> bit 3 (IDLE) kapalı, bit 7 (GLOBAL_AFK) kapalı
-#   nearby -> bit 3 açık, bit 7 kapalı  (varsayılan — anti-raid: AFK listesi herkese açık değil)
-#   all    -> bit 3 ve bit 7 açık
+# Who may see that a player is idle.
+#   off     nobody
+#   nearby  only players within near-radius below   (default)
+#   all     everyone, including through the tab list
+#
+# "nearby" is the default on purpose: a server-wide list of who is AFK is a
+# raiding aid, since it says which bases are unattended and for how long.
 afk-visibility: nearby
 
-# DESIGN.md §5: yakın katman yarıçapı (blok) ve toplu yayın periyodu (tick, 20/sn).
+# Radius in blocks for the detailed, near-range cue layer. Players further away
+# than this fall back to the coarse tab-list cue (if share-global-tier allows).
 near-radius: 48.0
+
+# How often batched cues are broadcast, in ticks (20 ticks = 1 second).
+# Lower is more responsive and more bandwidth; 4 is roughly 5 updates a second.
 update-interval-ticks: 4
 
-# DESIGN.md §4/§6: bu eşiğin 2 katı SLEEPY bayrağını tetikler (istemci tarafında).
+# Seconds of no input before a player counts as idle. Twice this value marks
+# them as asleep, which clients draw differently.
 idle-threshold-seconds: 300
 
 rate-limit:
-  # DESIGN.md §5: "oyuncu başına ≤4 CueUpdate/saniye; aşan paketler düşer."
+  # Cue updates accepted per player per second. Anything above this is dropped.
   max-updates-per-second: 4
-  # Ardışık ihlal (hız sınırı aşımı / aşırı boyut / bozuk paket) sayısı bu eşiği
-  # geçerse oyuncu atılır. 0 = asla atma, sadece paketi düşür + logla.
+
+  # Kick a player after this many consecutive violations (rate limit exceeded,
+  # oversized packet, or malformed packet). 0 disables kicking: offending
+  # packets are still dropped and logged, the player just stays connected.
   #
-  # Varsayılan 0 (kapalı): gerçek bir sunucuda bir lag spike'ı, ViaVersion'ın
-  # eski bir istemciyi yeniden paketlemesindeki bir tuhaflık ya da bozuk/başka
-  # bir modun ürettiği kötü niyetsiz bir istemci paketleri kolayca "ardışık
-  # ihlal" eşiğine değdirebilir; bu, hız sınırını aşan ama saldırgan olmayan
-  # masum bir oyuncuyu sunucudan atmak demektir. Kick, bilinçli bir opt-in
-  # olmalı, sürpriz bir varsayılan değil.
+  # 0 is the default deliberately. On a real server a lag spike, a quirk in how
+  # ViaVersion repacks an older client, or some unrelated mod producing odd
+  # packets can all run up a violation streak without anyone acting in bad
+  # faith — and kicking there means throwing out an innocent player. Kicking
+  # should be a decision an admin makes, not a surprise default.
   kick-after-violations: 0
 
-# DESIGN.md §5: global (sekme listesi) katman "değişimde ve ≤1/saniye".
+# Minimum gap in milliseconds between coarse tab-list broadcasts for a player.
+# The coarse layer is sent on change and no more often than this.
 global-broadcast-min-interval-ms: 1000

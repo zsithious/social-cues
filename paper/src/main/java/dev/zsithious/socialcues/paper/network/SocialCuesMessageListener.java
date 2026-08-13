@@ -86,12 +86,12 @@ public final class SocialCuesMessageListener implements PluginMessageListener {
                 (int) Math.round(config.relayConfig().nearRadius()));
         player.sendPluginMessage(plugin, ProtocolConstants.CHANNEL, S2CMessages.encode(hello));
         if (greeted.add(player.getUniqueId())) {
-            plugin.getLogger().info("socialcues: handshake with " + player.getName() + " complete (" + reason + ")");
+            plugin.getLogger().info("Handshake with " + player.getName() + " complete (" + reason + ")");
         }
     }
 
     private void handleViolation(Player player, IngestOutcome outcome) {
-        plugin.getLogger().warning("socialcues: " + player.getName() + " " + outcome.status()
+        plugin.getLogger().warning(player.getName() + ": " + outcome.status()
                 + " (streak " + outcome.violationStreak() + ")");
         int threshold = config.kickAfterViolations();
         if (threshold > 0 && outcome.violationStreak() >= threshold) {

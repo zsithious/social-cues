@@ -24,15 +24,30 @@ being checked is the artifact that ships.
 """
 
 import json
+import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LOOM_CACHE = pathlib.Path.home() / ".gradle/caches/fabric-loom"
-JAVAP = pathlib.Path("/home/erto/jdk21/bin/javap")
+# JAVA_HOME first, then whatever javap is on PATH. This used to be one
+# developer's absolute path, which made the tool useless to anyone else.
+_jh = os.environ.get("JAVA_HOME")
+_javap = pathlib.Path(_jh, "bin", "javap") if _jh else None
+if _javap is None or not _javap.exists():
+    _found = shutil.which("javap")
+    if _found is None:
+        sys.exit(
+            "verify-mixins: javap not found.\n"
+            "Set JAVA_HOME to a JDK 21 installation. A JRE is not enough -- javap\n"
+            "ships only with the JDK, and this tool reads class files with it."
+        )
+    _javap = pathlib.Path(_found)
+JAVAP = _javap
 
 # javap renders the annotations we care about like:
 #   org.spongepowered.asm.mixin.Mixin(value=[class Lnet/minecraft/class_355;]

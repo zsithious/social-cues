@@ -7,7 +7,7 @@ and this project uses [semantic versioning](https://semver.org/) with a
 `+mc<version>` build suffix on the Modrinth releases (`1.0.0+mc1.21.4`), because
 one source release ships as twelve Fabric jars plus one Paper jar.
 
-## [1.0.0] — unreleased
+## [1.0.0] — 2026-08-13
 
 First public release. Everything below is the initial feature set rather than a
 diff against anything, so it is grouped by what it does rather than by

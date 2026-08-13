@@ -1,98 +1,114 @@
 # Social Cues
 
-Oyuncuların ne yaptığını (yazıyor / bir ekranda / boşta / konuşuyor)
-diğer oyunculara oyun içi görsellerle gösteren, WATUT'a bağımsız ve açık
-kaynaklı bir alternatif. Tek Modrinth projesinde hem Fabric modu (1.21 →
-1.21.11, 12 sürüm) hem Paper/Spigot/Purpur/Leaf eklentisi (tek jar) olarak
-dağıtılır.
+An independent, open-source alternative to WATUT: it shows other players what
+they are actually doing — typing, in a menu, idle, or speaking — through in-game
+visuals rather than a chat message.
 
-Tasarımın tek doğruluk kaynağı **`DESIGN.md`**. Temiz oda kuralı için
-**`CLEANROOM.md`**'ye bakın — bu proje WATUT'un koduna hiçbir zaman
-bakılmadan, sadece genel/herkese açık davranış tarifinden ve
-Minecraft/Fabric/Bukkit'in resmi API'lerinden geliştirilmiştir.
+It ships as two things, published separately because they are installed by
+different people in different places:
 
-## Durum
-
-**P0–P8 kodu tamam, yayın bekliyor (sürüm `1.0.0`).** Üç katmanın hepsi
-(isim etiketi / sekme listesi / poz + tutulan ekran), yapılandırma ekranı,
-gizlilik anahtarları ve on iki sürümün tamamı çalışır durumda; `buildAll`
-12 Fabric + 1 Paper jar üretiyor, `:core:test` 435 test geçiyor ve
-`tools/verify-mixins.py` on iki satırın hepsinde mixin hedeflerini
-doğruluyor.
-
-El testi durumu — **derlenmek çalışmak değildir**, P7 bunu pahalıya öğretti:
-
-| Satır | Durum |
-|---|---|
-| 1.21.11 | el testi yapıldı (P4/P5/P6 turları) |
-| 1.21 | el testi yapıldı (P7 kova A turu) |
-| 1.21.1 | kısa görsel doğrulama **bekliyor** |
-| 1.21.2 – 1.21.10 | derleme + mixin doğrulaması var, oyunda hiç çalıştırılmadı |
-
-Faz planı için `DESIGN.md` §14, sıradaki iş için `SIRADAKI-IS.md`.
-
-## Opsiyonel entegrasyonlar
-
-Dördü de **yoksa sessizce kapalı**; hiçbiri zorunlu değil ve hiçbirinin kodu
-yayınlanan jar'lara girmez.
-
-| Entegrasyon | Ne yapar | Nasıl bağlanır |
+| Artifact | Platform | Versions |
 |---|---|---|
-| Mod Menu | ayarlar ekranını mod listesinden açar | `modmenu` entrypoint |
-| Cloth Config | ayarlar ekranının kendisi | jar-in-jar (gömülü) |
-| Simple Voice Chat | "konuşuyor" ipucu | `voicechat` entrypoint, `compileOnly` |
-| PlaceholderAPI | sunucu tarafı `%socialcues_*%` yer tutucuları | `softdepend`, `compileOnly` |
+| Fabric mod | client and Fabric servers | 1.21 → 1.21.11 (twelve jars) |
+| Paper plugin | Bukkit / Spigot / Paper / Purpur / Leaf | all of 1.21.x (one jar) |
 
-Son ikisinin lisansı bu projeyle aynı değil (SVC "All Rights Reserved",
-PlaceholderAPI GPL-3.0). İkisi de **yalnızca derleme classpath'inde**: hiçbir
-baytları dağıtılan jar'lara girmiyor ve her birine yapılan tüm atıflar tek bir
-dosyada toplanmış durumda, böylece bu iddia göz kararı değil makine kontrolü
-ile doğrulanabiliyor.
+The server side is not optional. A vanilla server does not forward unknown
+custom payloads to other clients, so something has to relay them: the Fabric mod
+if the server runs Fabric, the plugin if it runs Paper.
 
-## Modül yapısı
+**`DESIGN.md` is the single source of truth for the design.** See
+**`CLEANROOM.md`** for the clean-room rule: this project was built without ever
+reading WATUT's code, from its publicly described behaviour and the official
+Minecraft / Fabric / Bukkit APIs only.
+
+## Status
+
+Version `1.0.0`. All three cue layers (nametag icon, tab-list icon, body
+language and the held screen panel), the configuration screen, the privacy
+switches, and all twelve Minecraft rows are implemented. `buildAll` produces
+twelve Fabric jars plus the Paper jar, `:core:test` runs 435 tests, and
+`tools/verify-mixins.py` confirms every mixin target resolves on all twelve rows.
+
+Compiling is not the same as running, so release channels follow what has
+actually been played rather than what has been built. `versions.json` records
+that per row in a `handTested` field, and CI turns it into the Modrinth channel:
+
+| Row | Channel |
+|---|---|
+| 1.21, 1.21.11 | `release` — hand tested |
+| 1.21.1 – 1.21.10 | `beta` — builds and passes mixin verification, not yet played |
+
+## Optional integrations
+
+All four are silently inert when absent. None is required, and none of them has
+a single byte in the published jars.
+
+| Integration | What it adds | How it attaches |
+|---|---|---|
+| Mod Menu | opens the settings screen from the mod list | `modmenu` entrypoint |
+| Cloth Config | the settings screen itself | jar-in-jar (bundled) |
+| Simple Voice Chat | the "speaking" cue | `voicechat` entrypoint, `compileOnly` |
+| PlaceholderAPI | server-side `%socialcues_*%` placeholders | `softdepend`, `compileOnly` |
+
+The last two are not licensed the same way this project is (Simple Voice Chat is
+All Rights Reserved, PlaceholderAPI is GPL-3.0). Both are on the **compile
+classpath only**: none of their bytes are redistributed, and every reference to
+either is confined to a single file so the claim can be machine-checked instead
+of taken on trust:
 
 ```
-core/         Saf Java protokol + durum modeli. net.minecraft.* / org.bukkit.* import YOK.
-mc-shared/    Tüm 12 MC sürümünde aynı derlenen paylaşılan Fabric kodu.
-adapters/     Render kovaları (A/B/C/D) — sürüme özgü, mixin ağırlıklı kod.
-mc/           settings.gradle.kts tarafından versions.json'dan üretilen :mc:<sürüm> projeleri.
-paper/        Tek jar Bukkit/Paper eklentisi.
+unzip -l mc/1.21.11/build/libs/socialcues-fabric-1.21.11-1.0.0.jar | grep de/maxhenkel
+unzip -l paper/build/libs/socialcues-paper-1.0.0.jar               | grep me/clip
 ```
 
-`core/` hiçbir zaman Minecraft veya Bukkit tiplerine bağımlı olmaz; bu
-sayede Fabric modu ile Paper eklentisi aynı protokol/durum kodunu paylaşır
-ve iki taraf arasında protokol sapması imkânsız hale gelir. Bu kural
-`core/build.gradle.kts` içindeki `checkCleanRoom` Gradle görevi ile de
-otomatik denetlenir (`./gradlew :core:check`).
+Both must come back empty.
 
-## Derleme
-
-Gereken JDK: `/home/erto/jdk21` (Temurin 21). Sistem java'sı **kullanılmaz**;
-her `gradle.properties` bunu `org.gradle.java.home` ile zorunlu kılar.
+## Module layout
 
 ```
-./gradlew :core:test                 # protokol + durum modeli birim testleri
-./gradlew :mc:1.21.11:build          # birincil hedef: Fabric 1.21.11
-./gradlew :paper:build               # Paper/Leaf eklentisi
-./gradlew buildAll                   # on iki Fabric jar'ı + Paper jar'ı
+core/         Pure Java protocol and state model. No net.minecraft.* or org.bukkit.* imports.
+mc-shared/    Shared Fabric code that compiles identically on all twelve rows.
+adapters/     Render buckets (A/B/C/D) — version-specific, mixin-heavy code.
+mc/           :mc:<version> projects, generated from versions.json by settings.gradle.kts.
+paper/        The single-jar Bukkit/Paper plugin.
 ```
 
-Ölçüm araçları (sürüm sınırları tahmin edilmez, ölçülür):
+`core/` never depends on Minecraft or Bukkit types. That is what lets the Fabric
+mod and the Paper plugin share one protocol and state model, which in turn makes
+protocol drift between the two sides impossible. The rule is enforced by the
+`checkCleanRoom` Gradle task (`./gradlew :core:check`), not just by convention.
+
+## Building
+
+Requires **JDK 21** — not just to target, but to run Gradle on. Loom 1.17.17 has
+only been verified there, so the build refuses to start on anything else and
+tells you how to fix it. Set `JAVA_HOME`, or put `org.gradle.java.home` in your
+own `~/.gradle/gradle.properties`; it is deliberately not committed here, since
+an absolute path in a shared file means nobody else can build the repo.
 
 ```
-tools/seam.sh <sınıf> [desen]        # bir üye hangi satırlarda var?
-python3 tools/verify-mixins.py       # mixin'ler gerçekten bağlanacak mı?
-python3 tools/gen_icons.py           # ipucu ikon atlası (üretici depoda)
-python3 tools/gen_mod_icon.py        # mod/proje ikonu
+./gradlew :core:test                 # protocol and state-model unit tests
+./gradlew :mc:1.21.11:build          # a single Fabric row
+./gradlew :paper:build               # the Paper plugin
+./gradlew buildAll                   # all twelve Fabric jars plus the plugin
 ```
 
-İlk `:mc:*` derlemesi Minecraft istemci/sunucu jar'larını ve Yarn
-mapping'lerini indirip decompile eder; ilk çalıştırma uzun sürebilir.
+The first `:mc:*` build downloads and decompiles the Minecraft jars and Yarn
+mappings for that row; expect it to take a while.
 
-Sürüm matrisi (`mc`, `yarn`, `fabric-api`, render kovası, loom sürümü)
-`versions.json`'da makine-okunur biçimde tutulur; 12 build dosyası elle
-yazılmaz, `settings.gradle.kts` bunları programatik olarak üretir.
+Measurement tools — version boundaries are measured here, never guessed:
 
-## Lisans
+```
+tools/seam.sh <class> [pattern]      # which rows actually have this member?
+python3 tools/verify-mixins.py       # will the mixins really bind?
+python3 tools/gen_icons.py           # the cue icon atlas (generator lives in the repo)
+python3 tools/gen_mod_icon.py        # the mod and project icon
+```
 
-MIT — bkz. `LICENSE`. Gerekçe için `DESIGN.md` §13.
+The version matrix (`mc`, `yarn`, `fabric-api`, render bucket, Loom version)
+lives in `versions.json` in machine-readable form. The twelve build files are
+not written by hand; `settings.gradle.kts` generates them from that one file.
+
+## License
+
+MIT — see `LICENSE`. The reasoning is in `DESIGN.md` §13.

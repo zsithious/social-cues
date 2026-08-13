@@ -65,8 +65,11 @@ public final class SocialCuesPlugin extends JavaPlugin {
         long periodTicks = Math.max(1, config.relayConfig().updateIntervalTicks());
         scheduler.runRepeating(this::broadcastTick, periodTicks, periodTicks);
 
-        getLogger().info("Social Cues loaded (P2: relay + config + visibility filter, near-radius="
-                + config.relayConfig().nearRadius() + ", update-interval-ticks=" + periodTicks + ")");
+        // No development-phase label here: this line lands in the console of every
+        // server that installs the plugin, and "P2" means nothing outside this repo.
+        // It reports the two settings an admin might actually want to confirm.
+        getLogger().info("Social Cues loaded (near-radius=" + config.relayConfig().nearRadius()
+                + ", update-interval-ticks=" + periodTicks + ")");
     }
 
     @Override

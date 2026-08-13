@@ -2,6 +2,30 @@
 // its own build logic. This block only pins group/version and the default
 // repository for all subprojects so it is not repeated 12+ times.
 
+// The Gradle daemon's own JDK is what Loom and the Minecraft toolchain actually
+// run on; `options.release.set(21)` in the subprojects controls the bytecode
+// target, not this. Without a check here a mismatch surfaces much later as an
+// opaque Loom or mixin failure, so fail early and say what to do about it.
+//
+// This refuses anything that is not 21 rather than only anything older, because
+// the repo's rule is that version boundaries are measured, not guessed (see
+// tools/seam.sh and tools/verify-mixins.py). Loom 1.17.17 has been run on 21 and
+// on nothing else here; this machine's system JDK is 25 and keeping it away is
+// exactly why an absolute java.home used to be pinned in gradle.properties.
+// Anyone who wants to try another JDK can, but must say so out loud.
+val runningJava = JavaVersion.current()
+if (runningJava != JavaVersion.VERSION_21 && !project.hasProperty("allowUnverifiedJdk")) {
+    throw GradleException(
+        "Social Cues builds on JDK 21; the Gradle daemon is running on JDK $runningJava.\n" +
+        "\n" +
+        "  Fix:      set JAVA_HOME to a JDK 21 installation, or put\n" +
+        "            org.gradle.java.home=/path/to/jdk21 in your own\n" +
+        "            ~/.gradle/gradle.properties (machine-specific, so not committed here).\n" +
+        "  Override: ./gradlew -PallowUnverifiedJdk ...  (untested; Loom 1.17.17 has only\n" +
+        "            been verified on 21)"
+    )
+}
+
 allprojects {
     group = project.property("maven_group") as String
     version = project.property("mod_version") as String

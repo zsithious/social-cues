@@ -21,7 +21,13 @@
 set -u
 
 MAVEN_DIR="$HOME/.gradle/caches/fabric-loom/minecraftMaven/net/minecraft/minecraft-merged"
-JAVAP="${JAVA_HOME:-/home/erto/jdk21}/bin/javap"
+# JAVA_HOME if set, otherwise whatever javap is on PATH.
+JAVAP="${JAVA_HOME:+$JAVA_HOME/bin/}javap"
+if ! command -v "$JAVAP" >/dev/null 2>&1; then
+    echo "seam: javap not found at '$JAVAP'." >&2
+    echo "Set JAVA_HOME to a JDK 21 installation -- a JRE is not enough, javap ships only with the JDK." >&2
+    exit 1
+fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if [ $# -lt 1 ]; then
