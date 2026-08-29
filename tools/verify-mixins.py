@@ -196,7 +196,7 @@ def check(version, row):
         if not names:
             # Not a failure of this tool's kind -- there is nothing to bind. It
             # is still the single most important thing to say about such a row
-            # (SIRADAKI-IS.md: "12 jar derleniyor" is not "12 sürüm çalışıyor"),
+            # ("12 jar derleniyor" is not "12 sürüm çalışıyor"),
             # so the caller prints it loudly and counts it separately.
             return None, []
         for name in names:

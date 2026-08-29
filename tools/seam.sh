@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# DESIGN.md §7 "P7 uygulama notu" / SIRADAKI-IS.md işletme notu 4:
+# DESIGN.md §7 "P7 uygulama notu":
 # "Sürüm sınırlarını tahmin etme, javap ile ölç."
 #
 # Prints, for every Minecraft row in versions.json, whether a member exists on a
