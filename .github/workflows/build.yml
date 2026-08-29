@@ -107,6 +107,45 @@ jobs:
   #   - repository secret   MODRINTH_TOKEN    = a Modrinth PAT with write access
   # ---------------------------------------------------------------------------
 
+  # GitHub is where the tag itself lives, so the thirteen jars belong on it too.
+  # A Modrinth outage, a page still in review, or simply someone who does not use
+  # Modrinth should not stand between a tag and the files it names. Unlike the two
+  # jobs below this one is not gated on a repository variable: the release goes to
+  # this repository, which by definition exists.
+  github-release:
+    needs: [matrix, fabric-matrix, paper-build]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    # The repository's default GITHUB_TOKEN is read-only. Creating a release needs
+    # contents:write, asked for here rather than workflow-wide so the build jobs
+    # keep the read-only token they are perfectly happy with.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      # Same rule as the Modrinth jobs: the release notes are this version's
+      # changelog section, not the whole file.
+      - name: extract this version's changelog section
+        run: |
+          awk '/^## \[/{ if (seen++) exit } seen' CHANGELOG.md > RELEASE-NOTES.md
+          test -s RELEASE-NOTES.md
+      - name: create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -l dist
+          # Twelve Fabric rows plus the one Paper jar. Asserted rather than
+          # assumed: a matrix row that silently produced nothing would otherwise
+          # ship as a release that is quietly missing a Minecraft version.
+          test "$(ls dist/*.jar | wc -l)" -eq 13
+          gh release create "$GITHUB_REF_NAME" dist/*.jar \
+            --title "Social Cues ${GITHUB_REF_NAME#v}" \
+            --notes-file RELEASE-NOTES.md
+
   # One Modrinth version PER Minecraft version, not one version carrying all
   # twelve jars. Modrinth would accept the latter, but then every player sees
   # twelve files under a single entry with nothing saying which one is theirs;
