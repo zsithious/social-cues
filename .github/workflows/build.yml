@@ -5,6 +5,17 @@ on:
     branches: [main]
     tags: ['v*']
   pull_request:
+  # The Paper plugin is one jar for every supported version, so it is the one
+  # artifact that can need a re-publish without a new tag behind it -- a failed
+  # upload, or a page created after the tag went out. Re-tagging to fix that
+  # would try to re-publish twelve Fabric versions that are already up, which
+  # Modrinth rejects. This runs the one job instead.
+  workflow_dispatch:
+    inputs:
+      publish-paper:
+        description: 'Publish the Paper plugin to Modrinth from this ref'
+        type: boolean
+        default: false
 
 # NOTE: the build refuses to run on anything but JDK 21 (see the check in
 # build.gradle.kts -- Loom 1.17.17 has only been verified there). setup-java
@@ -204,7 +215,7 @@ jobs:
   # every game version it actually supports.
   publish-paper:
     needs: [matrix, fabric-matrix, paper-build]
-    if: startsWith(github.ref, 'refs/tags/v') && vars.MODRINTH_ID_PAPER != ''
+    if: (startsWith(github.ref, 'refs/tags/v') || inputs.publish-paper) && vars.MODRINTH_ID_PAPER != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -233,7 +244,11 @@ jobs:
           # (no NMS, oldest-API compile), so this one is a release.
           version-type: release
           # Every row the Fabric side supports, because the single jar does.
-          game-versions: ${{ join(fromJSON(needs.matrix.outputs.mc-versions), ' ') }}
+          # Comma-separated, not space-separated: mc-publish splits this input on
+          # commas and newlines only, so a space-joined list arrives as one
+          # nonsense game version, gets dropped as unknown, and the upload fails
+          # with "at least one game version should be specified".
+          game-versions: ${{ join(fromJSON(needs.matrix.outputs.mc-versions), ', ') }}
           game-version-filter: none
           # Folia is deliberately absent: the plugin schedules through
           # BukkitPluginScheduler, and Folia needs region schedulers. Claiming
