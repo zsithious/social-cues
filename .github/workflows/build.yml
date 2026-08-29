@@ -33,6 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       mc-versions: ${{ steps.read.outputs.mc-versions }}
+      mc-version-lines: ${{ steps.read.outputs.mc-version-lines }}
       publish-targets: ${{ steps.read.outputs.publish-targets }}
       mod-version: ${{ steps.read.outputs.mod-version }}
     steps:
@@ -48,6 +49,20 @@ jobs:
           # one-word edit in versions.json.
           echo "publish-targets=$(jq -c '[.versions[] | {mc: .mc, channel: (if .handTested then "release" else "beta" end)}]' versions.json)" >> "$GITHUB_OUTPUT"
           echo "mod-version=$(grep '^mod_version=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+          # The same list again, one version per line, for the Paper job -- the
+          # single jar there is published as one Modrinth version listing all
+          # twelve. mc-publish splits its list inputs on newlines: a comma- or
+          # space-joined list arrives as one game version named
+          # "1.21, 1.21.1, ..." which no registry has heard of, gets dropped as
+          # unknown, and the upload then fails with "at least one game version
+          # should be specified" -- a message that reads as though the input
+          # never arrived at all. Both wrong separators were tried on the 1.0.0
+          # tag before this line existed.
+          {
+            echo 'mc-version-lines<<MCEOF'
+            jq -r '.versions[].mc' versions.json
+            echo 'MCEOF'
+          } >> "$GITHUB_OUTPUT"
 
   core-test:
     runs-on: ubuntu-latest
@@ -244,11 +259,8 @@ jobs:
           # (no NMS, oldest-API compile), so this one is a release.
           version-type: release
           # Every row the Fabric side supports, because the single jar does.
-          # Comma-separated, not space-separated: mc-publish splits this input on
-          # commas and newlines only, so a space-joined list arrives as one
-          # nonsense game version, gets dropped as unknown, and the upload fails
-          # with "at least one game version should be specified".
-          game-versions: ${{ join(fromJSON(needs.matrix.outputs.mc-versions), ', ') }}
+          # Newline-separated; see the matrix job for why that matters.
+          game-versions: ${{ needs.matrix.outputs.mc-version-lines }}
           game-version-filter: none
           # Folia is deliberately absent: the plugin schedules through
           # BukkitPluginScheduler, and Folia needs region schedulers. Claiming
