@@ -219,8 +219,14 @@ jobs:
           # `~1.21.x` range for the loader's benefit, which is not the same
           # question as "which Modrinth game version is this file for".
           game-version-filter: none
+          # The plugin is listed as optional rather than required because the
+          # server half is only a plugin when the server is Paper-based; on a
+          # Fabric server it is this same jar. Listing it puts a link to the
+          # other page in Modrinth's own dependency box, which is where someone
+          # installing the mod will look for it.
           dependencies: |
             fabric-api(required)
+            ${{ vars.MODRINTH_ID_PAPER }}(optional)
             modmenu(optional)
             simple-voice-chat(optional)
           changelog-file: RELEASE-NOTES.md
@@ -270,6 +276,11 @@ jobs:
             spigot
             paper
             purpur
+          # The client mod, so the two pages point at each other from inside
+          # Modrinth as well as from their descriptions. Optional in the literal
+          # sense the field means: the plugin installs and runs without it, it
+          # just has nobody to relay for.
           dependencies: |
+            ${{ vars.MODRINTH_ID }}(optional)
             placeholderapi(optional)
           changelog-file: RELEASE-NOTES.md
