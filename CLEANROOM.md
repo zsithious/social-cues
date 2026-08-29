@@ -13,7 +13,7 @@ kodunu değil. WATUT (`github.com/Corosauce/WATUT`, `github.com/SlidePowered/Wat
 
 ## Tasarım nereden geldi
 
-Bu projenin tasarımı (bkz. `DESIGN.md`) tamamen şu kaynaklardan türetildi:
+Bu projenin tasarımı tamamen şu kaynaklardan türetildi:
 
 1. **Genel, herkese açık ürün tarifi:** Modrinth/CurseForge'daki WATUT açıklama
    metni ve ekran görüntüleri/GIF'leri — "oyuncunun yazdığını, bir ekranda
@@ -44,5 +44,5 @@ davranış tarifinden, (b) Minecraft/Fabric/Bukkit'in resmi API'lerinden ya da
 (c) bu projeye özgü bağımsız mühendislik kararlarından geliyor — WATUT'un
 kaynağından değil.
 
-Bkz. `DESIGN.md` §0 (ihlal edilemez kural) ve §15 (WATUT'a göre ayrışma
-noktaları).
+Kural, derleme sırasında `checkCleanRoom` Gradle görevi tarafından
+denetleniyor.

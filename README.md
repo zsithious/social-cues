@@ -16,8 +16,7 @@ The server side is not optional. A vanilla server does not forward unknown
 custom payloads to other clients, so something has to relay them: the Fabric mod
 if the server runs Fabric, the plugin if it runs Paper.
 
-**`DESIGN.md` is the single source of truth for the design.** See
-**`CLEANROOM.md`** for the clean-room rule: this project was built without ever
+See **`CLEANROOM.md`** for the clean-room rule: this project was built without ever
 reading WATUT's code, from its publicly described behaviour and the official
 Minecraft / Fabric / Bukkit APIs only.
 
@@ -111,4 +110,4 @@ not written by hand; `settings.gradle.kts` generates them from that one file.
 
 ## License
 
-MIT — see `LICENSE`. The reasoning is in `DESIGN.md` §13.
+MIT — see `LICENSE`.
